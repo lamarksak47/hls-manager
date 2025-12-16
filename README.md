@@ -16,7 +16,7 @@ Passo 2: Baixar o Script de Instalação
 Opção A: Baixar do GitHub (recomendado):
 
 bash
-git clone https://github.com/seu-usuario/hls-manager.git
+git clone https://github.com/lamarksak47/hls-manager.git
 cd hls-manager
 Opção B: Criar manualmente (se não tiver Git):
 
