@@ -25,7 +25,7 @@ sudo apt remove -y libmariadb3 libmariadb-dev mariadb-connector-c 2>/dev/null ||
 # Baixar e instalar MariaDB Connector/C 3.3.4 (versão estável)
 echo "📥 Baixando MariaDB Connector/C 3.3.4..."
 cd /tmp
-wget -q https://archive.mariadb.org/mariadb-connector-c-3.3.4/mariadb-connector-c-3.3.4-ubuntu-jammy-amd64.tar.gz
+wget -q https://archive.mariadb.org/mariadb-12.2.1/bintar-linux-systemd-x86_64/mariadb-12.2.1-linux-systemd-x86_64.tar.gz
 tar -xzf mariadb-connector-c-3.3.4-ubuntu-jammy-amd64.tar.gz
 cd mariadb-connector-c-3.3.4-ubuntu-jammy-amd64
 
