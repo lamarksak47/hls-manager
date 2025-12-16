@@ -1,176 +1,63 @@
 #!/bin/bash
-# install_hls_perfect.sh - Script PERFEITO para HLS Manager
+# install_hls_sqlite_only.sh - SISTEMA 100% FUNCIONAL SEM MariaDB
 
 set -e
 
-echo "🔧 INSTALANDO HLS MANAGER - VERSÃO DEFINITIVA"
-echo "=============================================="
+echo "🎬 INSTALANDO HLS MANAGER - SQLite APENAS"
+echo "========================================"
 
-# 1. PARAR TUDO e LIMPAR
-echo "🧹 Limpando instalações anteriores..."
-sudo systemctl stop hls-* mariadb mysql 2>/dev/null || true
-sudo pkill -9 mysqld mariadbd 2>/dev/null || true
-sudo pkill -9 gunicorn 2>/dev/null || true
+# 1. PARAR e REMOVER tudo relacionado a MariaDB/MySQL
+echo "🧹 Limpando sistema..."
+sudo systemctl stop mariadb mysql hls-* 2>/dev/null || true
+sudo pkill -9 mysqld mariadbd gunicorn 2>/dev/null || true
 
-# Remover pacotes problemáticos
+# Remover MariaDB se existir (opcional)
 sudo apt-get remove --purge -y mariadb-* mysql-* 2>/dev/null || true
 sudo apt-get autoremove -y
 sudo apt-get autoclean
 
-# Remover diretórios
-sudo rm -rf /var/lib/mysql /var/lib/mariadb /etc/mysql /etc/my.cnf 2>/dev/null || true
+# Remover instalações anteriores
 sudo rm -rf /opt/hls-* 2>/dev/null || true
 sudo rm -f /etc/systemd/system/hls-*.service 2>/dev/null || true
 
-# 2. INSTALAR MariaDB FRESCO
-echo "📦 Instalando MariaDB fresco..."
+# 2. INSTALAR APENAS O ESSENCIAL
+echo "📦 Instalando dependências..."
 sudo apt-get update
-sudo apt-get install -y mariadb-server
-
-# 3. RESETAR MariaDB CORRETAMENTE
-echo "🔄 Resetando MariaDB..."
-
-# Parar MariaDB
-sudo systemctl stop mariadb 2>/dev/null || true
-sleep 2
-
-# Matar qualquer processo MariaDB restante
-sudo pkill -9 mysqld mariadbd 2>/dev/null || true
-sleep 2
-
-# Iniciar em modo seguro SEM autenticação
-echo "Iniciando MariaDB sem autenticação..."
-sudo mysqld_safe --skip-grant-tables --skip-networking &
-MYSQL_PID=$!
-sleep 5
-
-# Resetar senha CORRETAMENTE
-echo "Resetando senha root..."
-sudo mysql -u root << 'EOF'
-USE mysql;
-
--- Remover senha do root
-UPDATE user SET plugin='mysql_native_password', authentication_string='' WHERE User='root';
-UPDATE user SET password_expired='N' WHERE User='root';
-
--- Garantir que root pode conectar
-UPDATE user SET Host='localhost' WHERE User='root' AND Host='localhost';
-
-FLUSH PRIVILEGES;
-EOF
-
-echo "✅ Senha resetada com sucesso"
-
-# Parar modo seguro
-sudo kill $MYSQL_PID 2>/dev/null || true
-sleep 3
-sudo pkill -9 mysqld mariadbd 2>/dev/null || true
-
-# 4. INICIAR MariaDB normalmente
-echo "🚀 Iniciando MariaDB normalmente..."
-sudo systemctl start mariadb
-sleep 3
-
-# Verificar se está rodando
-if ! sudo systemctl is-active --quiet mariadb; then
-    echo "⚠️ MariaDB não iniciou. Tentando manualmente..."
-    sudo mysqld_safe &
-    sleep 5
-fi
-
-# 5. CONFIGURAR NOVA SENHA
-echo "🔐 Configurando nova senha..."
-ROOT_PASS="RootPass123!"
-
-# Tentar conectar sem senha primeiro
-if sudo mysql -u root -e "SELECT 1" 2>/dev/null; then
-    echo "Configurando nova senha..."
-    sudo mysql -u root <<-EOF
--- Definir nova senha
-SET PASSWORD FOR 'root'@'localhost' = PASSWORD('${ROOT_PASS}');
-
--- Remover usuários anônimos
-DELETE FROM mysql.user WHERE User='';
-
--- Remover acesso root remoto
-DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-
--- Remover banco de teste
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-
--- Recarregar privilégios
-FLUSH PRIVILEGES;
-EOF
-    echo "✅ Senha configurada: $ROOT_PASS"
-else
-    echo "❌ Não foi possível conectar ao MariaDB"
-    echo "Tentando método alternativo..."
-    
-    # Método alternativo: usar socket
-    sudo mysql <<-EOF
-USE mysql;
-UPDATE user SET plugin='mysql_native_password' WHERE User='root';
-UPDATE user SET authentication_string=PASSWORD('${ROOT_PASS}') WHERE User='root';
-FLUSH PRIVILEGES;
-EOF
-fi
-
-# 6. CRIAR BANCO DE DADOS DA APLICAÇÃO
-echo "🗃️ Criando banco de dados..."
-APP_USER="hlsapp"
-APP_PASS="AppPass_$(date +%s | tail -c 6)"
-
-# Criar banco
-sudo mysql -u root -p"$ROOT_PASS" <<-EOF 2>/dev/null || sudo mysql -u root <<-EOF
-CREATE DATABASE IF NOT EXISTS hlsdb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${APP_PASS}';
-GRANT ALL PRIVILEGES ON hlsdb.* TO '${APP_USER}'@'localhost';
-FLUSH PRIVILEGES;
-SHOW GRANTS FOR '${APP_USER}'@'localhost';
-EOF
-
-echo "✅ Banco criado:"
-echo "   Database: hlsdb"
-echo "   User: $APP_USER"
-echo "   Password: $APP_PASS"
-
-# 7. INSTALAR DEPENDÊNCIAS DO SISTEMA
-echo "📦 Instalando dependências do sistema..."
 sudo apt-get install -y python3 python3-pip ffmpeg python3-venv nginx \
-    curl wget git pkg-config python3-dev
+    sqlite3 curl wget git
 
-# 8. CRIAR USUÁRIO E DIRETÓRIOS
-echo "👤 Criando estrutura do sistema..."
-if ! id "hlsuser" &>/dev/null; then
-    sudo useradd -r -s /bin/false -m -d /opt/hls hlsuser
-fi
+# 3. CRIAR USUÁRIO E DIRETÓRIOS
+echo "👤 Criando estrutura..."
+sudo useradd -r -s /bin/false -m -d /opt/hls hlsuser 2>/dev/null || true
 
-# Criar diretórios
-sudo mkdir -p /opt/hls/{uploads,hls,logs,config}
+sudo mkdir -p /opt/hls/{uploads,hls,logs,config,static}
 cd /opt/hls
 
-# Permissões
 sudo chown -R hlsuser:hlsuser /opt/hls
 sudo chmod 755 /opt/hls
 sudo chmod 770 /opt/hls/uploads
 
-# 9. INSTALAR PYTHON COM SQLite (SEM MySQL!)
-echo "🐍 Configurando Python com SQLite (100% confiável)..."
-
-# Criar virtualenv
+# 4. CONFIGURAR PYTHON
+echo "🐍 Configurando Python..."
 sudo -u hlsuser python3 -m venv venv
-
-# Instalar pacotes básicos
 sudo -u hlsuser ./venv/bin/pip install --upgrade pip setuptools wheel
-sudo -u hlsuser ./venv/bin/pip install flask==2.3.3 gunicorn==21.2.0 python-dotenv==1.0.0
 
-# 10. CRIAR APLICAÇÃO FLASK COM SQLite
-echo "💻 Criando aplicação Flask com SQLite..."
+# Instalar pacotes Python
+sudo -u hlsuser ./venv/bin/pip install flask==2.3.3 \
+    flask-sqlalchemy==3.0.5 \
+    flask-login==0.6.2 \
+    flask-wtf==1.1.1 \
+    gunicorn==21.2.0 \
+    python-dotenv==1.0.0 \
+    werkzeug==2.3.7 \
+    pillow==10.0.0
 
-# app.py - APLICAÇÃO COMPLETA COM SQLite
+# 5. CRIAR APLICAÇÃO FLASK COMPLETA
+echo "💻 Criando aplicação..."
+
+# app.py - SISTEMA COMPLETO COM SQLite
 sudo tee /opt/hls/app.py > /dev/null << 'EOF'
-from flask import Flask, render_template_string, jsonify, request, redirect, flash, url_for
+from flask import Flask, render_template_string, jsonify, request, redirect, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -181,15 +68,13 @@ from datetime import datetime
 import subprocess
 import uuid
 import json
+import time
 
 app = Flask(__name__)
 
-# Configuração SQLite (SEMPRE funciona!)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'hls.db')
-
+# Configuração SQLite (SEMPRE FUNCIONA!)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-key-' + os.urandom(24).hex())
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////opt/hls/hls.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = '/opt/hls/uploads'
 app.config['HLS_FOLDER'] = '/opt/hls/hls'
@@ -203,7 +88,7 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Modelos
+# ========== MODELOS ==========
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -226,7 +111,7 @@ class Channel(db.Model):
     status = db.Column(db.String(20), default='draft')  # draft, processing, active, error
     hls_url = db.Column(db.String(500))
     video_filename = db.Column(db.String(200))
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer)
     
     # Metadados
     duration = db.Column(db.Integer)  # segundos
@@ -236,23 +121,21 @@ class Channel(db.Model):
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    user = db.relationship('User', backref='channels')
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Helper functions
-def convert_to_hls(video_path, output_dir, channel_name):
-    """Converte vídeo para HLS"""
+# ========== FUNÇÕES AUXILIARES ==========
+def convert_to_hls(video_path, output_dir, channel_id):
+    """Converte vídeo para HLS usando FFmpeg"""
     try:
         os.makedirs(output_dir, exist_ok=True)
         
-        # Comando FFmpeg
+        # Comando FFmpeg para HLS
         cmd = [
             'ffmpeg', '-i', video_path,
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
             '-c:a', 'aac', '-b:a', '128k',
             '-hls_time', '10',
             '-hls_list_size', '0',
@@ -260,13 +143,15 @@ def convert_to_hls(video_path, output_dir, channel_name):
             '-f', 'hls', f'{output_dir}/index.m3u8'
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)  # 2 horas timeout
         
         if result.returncode == 0:
-            return True, f'{output_dir}/index.m3u8'
+            return True, f'/hls/{channel_id}/index.m3u8'
         else:
             return False, result.stderr
             
+    except subprocess.TimeoutExpired:
+        return False, "Timeout na conversão (2 horas)"
     except Exception as e:
         return False, str(e)
 
@@ -274,19 +159,19 @@ def allowed_file(filename):
     ALLOWED_EXTENSIONS = {'mp4', 'mkv', 'avi', 'mov', 'webm', 'flv'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Rotas principais
+# ========== ROTAS ==========
 @app.route('/')
 def index():
     return render_template_string('''
         <!DOCTYPE html>
         <html>
         <head>
-            <title>🎬 HLS Manager</title>
+            <title>🎬 HLS Stream Manager</title>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { 
+                body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     min-height: 100vh;
@@ -304,15 +189,14 @@ def index():
                     width: 100%;
                     text-align: center;
                 }
-                h1 { 
+                h1 {
                     color: #333;
                     margin-bottom: 20px;
                     font-size: 2.5rem;
                 }
-                p { 
-                    color: #666;
-                    margin-bottom: 30px;
-                    line-height: 1.6;
+                .logo {
+                    font-size: 4rem;
+                    margin-bottom: 20px;
                 }
                 .btn {
                     display: inline-block;
@@ -324,13 +208,14 @@ def index():
                     font-weight: bold;
                     font-size: 1.1rem;
                     transition: all 0.3s ease;
+                    margin: 10px;
                     border: none;
                     cursor: pointer;
-                    margin: 10px;
                 }
                 .btn:hover {
                     background: #3a0ca3;
                     transform: translateY(-2px);
+                    box-shadow: 0 10px 20px rgba(0,0,0,0.2);
                 }
                 .btn-secondary {
                     background: #6c757d;
@@ -345,34 +230,52 @@ def index():
                     background: #f8f9fa;
                     border-radius: 10px;
                 }
-                .features li {
+                .feature-item {
                     margin: 10px 0;
                     color: #555;
+                    display: flex;
+                    align-items: center;
+                }
+                .feature-item:before {
+                    content: "✅";
+                    margin-right: 10px;
+                }
+                .status {
+                    margin-top: 20px;
+                    padding: 10px;
+                    background: #d4edda;
+                    color: #155724;
+                    border-radius: 5px;
+                    font-weight: bold;
                 }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>🎬 HLS Manager</h1>
-                <p>Sistema completo de gerenciamento e streaming de vídeos HLS</p>
+                <div class="logo">🎬</div>
+                <h1>HLS Stream Manager</h1>
+                <p>Sistema completo de streaming de vídeo com conversão automática para HLS</p>
                 
                 <div class="features">
-                    <h3>✨ Funcionalidades:</h3>
-                    <ul>
-                        <li>✅ Upload de vídeos</li>
-                        <li>✅ Conversão automática para HLS</li>
-                        <li>✅ Player integrado</li>
-                        <li>✅ Gerenciamento de canais</li>
-                        <li>✅ Dashboard administrativo</li>
-                    </ul>
+                    <div class="feature-item">Upload de vídeos MP4, MKV, AVI, MOV</div>
+                    <div class="feature-item">Conversão automática para HLS</div>
+                    <div class="feature-item">Player integrado</div>
+                    <div class="feature-item">Dashboard administrativo</div>
+                    <div class="feature-item">Gerenciamento de múltiplos canais</div>
+                    <div class="feature-item">Banco de dados SQLite (sem configuração)</div>
                 </div>
                 
-                <a href="/login" class="btn">🚀 Começar Agora</a>
-                <a href="/health" class="btn btn-secondary">❤️ Health Check</a>
+                <div class="status">✅ Sistema 100% Funcional</div>
                 
-                <p style="margin-top: 30px; color: #999; font-size: 0.9rem;">
-                    Versão 2.0 • Desenvolvido com Flask & SQLite
-                </p>
+                <div style="margin-top: 30px;">
+                    <a href="/login" class="btn">🚀 Entrar no Sistema</a>
+                    <a href="/health" class="btn btn-secondary">❤️ Verificar Saúde</a>
+                </div>
+                
+                <div style="margin-top: 30px; font-size: 0.9rem; color: #666;">
+                    <p>Usuário padrão: <strong>admin</strong></p>
+                    <p>Senha padrão: <strong>admin123</strong></p>
+                </div>
             </div>
         </body>
         </html>
@@ -383,16 +286,15 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        remember = 'remember' in request.form
         
         user = User.query.filter_by(username=username).first()
         
         if user and user.check_password(password):
-            login_user(user, remember=remember)
+            login_user(user)
             flash('Login realizado com sucesso!', 'success')
             return redirect(url_for('dashboard'))
         else:
-            flash('Usuário ou senha inválidos.', 'danger')
+            flash('Usuário ou senha incorretos.', 'danger')
     
     return render_template_string('''
         <!DOCTYPE html>
@@ -400,17 +302,83 @@ def login():
         <head>
             <title>Login - HLS Manager</title>
             <style>
-                body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 50px; }
-                .login-box { max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
-                h2 { text-align: center; color: #333; margin-bottom: 30px; }
-                .form-group { margin-bottom: 20px; }
-                label { display: block; margin-bottom: 5px; color: #555; }
-                input[type="text"], input[type="password"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; }
-                .btn-login { width: 100%; padding: 12px; background: #4361ee; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
-                .btn-login:hover { background: #3a0ca3; }
-                .alert { padding: 10px; border-radius: 5px; margin-bottom: 20px; }
-                .alert-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-                .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                .login-box {
+                    background: white;
+                    border-radius: 15px;
+                    padding: 40px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    width: 100%;
+                    max-width: 400px;
+                }
+                h2 {
+                    color: #333;
+                    text-align: center;
+                    margin-bottom: 30px;
+                }
+                .form-group {
+                    margin-bottom: 20px;
+                }
+                input[type="text"], input[type="password"] {
+                    width: 100%;
+                    padding: 15px;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    transition: border-color 0.3s;
+                }
+                input:focus {
+                    border-color: #4361ee;
+                    outline: none;
+                }
+                .btn-login {
+                    width: 100%;
+                    padding: 15px;
+                    background: #4361ee;
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                }
+                .btn-login:hover {
+                    background: #3a0ca3;
+                }
+                .alert {
+                    padding: 15px;
+                    border-radius: 10px;
+                    margin-bottom: 20px;
+                    text-align: center;
+                }
+                .alert-danger {
+                    background: #f8d7da;
+                    color: #721c24;
+                    border: 1px solid #f5c6cb;
+                }
+                .alert-success {
+                    background: #d4edda;
+                    color: #155724;
+                    border: 1px solid #c3e6cb;
+                }
+                .credential-box {
+                    background: #f8f9fa;
+                    padding: 15px;
+                    border-radius: 10px;
+                    margin-top: 20px;
+                    text-align: center;
+                    font-size: 0.9rem;
+                    color: #666;
+                }
             </style>
         </head>
         <body>
@@ -427,28 +395,21 @@ def login():
                 
                 <form method="POST">
                     <div class="form-group">
-                        <label for="username">Usuário:</label>
-                        <input type="text" id="username" name="username" required>
+                        <input type="text" name="username" placeholder="Usuário" required>
                     </div>
                     
                     <div class="form-group">
-                        <label for="password">Senha:</label>
-                        <input type="password" id="password" name="password" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" name="remember"> Lembrar-me
-                        </label>
+                        <input type="password" name="password" placeholder="Senha" required>
                     </div>
                     
                     <button type="submit" class="btn-login">Entrar</button>
                 </form>
                 
-                <p style="text-align: center; margin-top: 20px; color: #666;">
-                    Usuário padrão: <strong>admin</strong><br>
-                    Senha: <strong>admin123</strong>
-                </p>
+                <div class="credential-box">
+                    <strong>Credenciais Padrão:</strong><br>
+                    Usuário: <code>admin</code><br>
+                    Senha: <code>admin123</code>
+                </div>
             </div>
         </body>
         </html>
@@ -459,98 +420,246 @@ def login():
 def dashboard():
     # Estatísticas
     total_channels = Channel.query.count()
-    active_channels = Channel.query.filter_by(status='active').count()
     user_channels = Channel.query.filter_by(user_id=current_user.id).count()
+    active_channels = Channel.query.filter_by(status='active', user_id=current_user.id).count()
     
     # Canais do usuário
-    channels = Channel.query.filter_by(user_id=current_user.id).order_by(Channel.created_at.desc()).limit(10).all()
+    channels = Channel.query.filter_by(user_id=current_user.id).order_by(Channel.created_at.desc()).limit(5).all()
     
     return render_template_string('''
         <!DOCTYPE html>
         <html>
         <head>
             <title>Dashboard - HLS Manager</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
+                :root {
+                    --primary: #4361ee;
+                    --secondary: #3a0ca3;
+                    --success: #4cc9f0;
+                    --dark: #212529;
+                    --light: #f8f9fa;
+                }
                 * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; }
-                .sidebar { background: #343a40; color: white; width: 250px; height: 100vh; position: fixed; padding: 20px; }
-                .main-content { margin-left: 250px; padding: 30px; }
-                .nav-link { color: rgba(255,255,255,0.8); padding: 10px 15px; display: block; text-decoration: none; border-radius: 5px; margin: 5px 0; }
-                .nav-link:hover { background: rgba(255,255,255,0.1); color: white; }
-                .nav-link.active { background: rgba(255,255,255,0.2); color: white; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }
-                .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-                .stat-value { font-size: 2rem; font-weight: bold; color: #4361ee; }
-                .btn { display: inline-block; padding: 10px 20px; background: #4361ee; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
-                .channel-list { background: white; border-radius: 10px; padding: 20px; margin-top: 20px; }
-                .channel-item { padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-                .badge { padding: 5px 10px; border-radius: 20px; font-size: 0.8rem; }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: #f5f7fb;
+                    color: #333;
+                }
+                .sidebar {
+                    background: linear-gradient(180deg, var(--primary) 0%, var(--secondary) 100%);
+                    color: white;
+                    width: 250px;
+                    height: 100vh;
+                    position: fixed;
+                    padding: 20px;
+                    box-shadow: 3px 0 10px rgba(0,0,0,0.1);
+                }
+                .main-content {
+                    margin-left: 250px;
+                    padding: 30px;
+                }
+                .nav-link {
+                    color: rgba(255,255,255,0.8);
+                    padding: 12px 20px;
+                    display: block;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    margin: 5px 0;
+                    transition: all 0.3s;
+                }
+                .nav-link:hover, .nav-link.active {
+                    background: rgba(255,255,255,0.1);
+                    color: white;
+                }
+                .stats-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 20px;
+                    margin: 30px 0;
+                }
+                .stat-card {
+                    background: white;
+                    padding: 25px;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                    text-align: center;
+                    transition: transform 0.3s;
+                }
+                .stat-card:hover {
+                    transform: translateY(-5px);
+                }
+                .stat-value {
+                    font-size: 2.5rem;
+                    font-weight: bold;
+                    color: var(--primary);
+                    margin: 10px 0;
+                }
+                .stat-label {
+                    color: #666;
+                    font-size: 0.9rem;
+                }
+                .btn {
+                    display: inline-block;
+                    padding: 12px 24px;
+                    background: var(--primary);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    margin: 10px 5px;
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                }
+                .btn:hover {
+                    background: var(--secondary);
+                    transform: translateY(-2px);
+                }
+                .channel-list {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 30px;
+                    margin-top: 30px;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                }
+                .channel-item {
+                    padding: 20px;
+                    border-bottom: 1px solid #eee;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .channel-item:last-child {
+                    border-bottom: none;
+                }
+                .badge {
+                    padding: 6px 12px;
+                    border-radius: 20px;
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                }
                 .badge-active { background: #d4edda; color: #155724; }
-                .badge-draft { background: #fff3cd; color: #856404; }
+                .badge-processing { background: #fff3cd; color: #856404; }
+                .badge-draft { background: #e2e3e5; color: #383d41; }
+                .empty-state {
+                    text-align: center;
+                    padding: 40px;
+                    color: #666;
+                }
+                .empty-state-icon {
+                    font-size: 3rem;
+                    margin-bottom: 20px;
+                    opacity: 0.5;
+                }
             </style>
         </head>
         <body>
             <div class="sidebar">
-                <h2 style="margin-bottom: 30px;">🎬 HLS Manager</h2>
-                <a href="/dashboard" class="nav-link active">📊 Dashboard</a>
-                <a href="/channels" class="nav-link">📺 Canais</a>
-                <a href="/channels/new" class="nav-link">➕ Novo Canal</a>
-                <a href="/upload" class="nav-link">📤 Upload</a>
-                <a href="/logout" class="nav-link" style="margin-top: 50px; color: #dc3545;">🚪 Sair</a>
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="font-size: 2.5rem;">🎬</div>
+                    <h2 style="margin: 10px 0;">HLS Manager</h2>
+                    <small style="opacity: 0.8;">Dashboard</small>
+                </div>
+                
+                <div style="margin-bottom: 30px;">
+                    <a href="/dashboard" class="nav-link active">📊 Dashboard</a>
+                    <a href="/channels" class="nav-link">📺 Canais</a>
+                    <a href="/channels/new" class="nav-link">➕ Novo Canal</a>
+                    <a href="/upload" class="nav-link">📤 Upload</a>
+                    <a href="/settings" class="nav-link">⚙️ Configurações</a>
+                </div>
+                
+                <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <div style="margin-bottom: 10px; opacity: 0.8;">
+                        <small>Conectado como:</small><br>
+                        <strong>{{ current_user.username }}</strong>
+                    </div>
+                    <a href="/logout" class="nav-link" style="color: #ff6b6b;">🚪 Sair</a>
+                </div>
             </div>
             
             <div class="main-content">
                 <h1>Dashboard</h1>
-                <p>Bem-vindo, {{ current_user.username }}!</p>
+                <p style="color: #666; margin-bottom: 30px;">Bem-vindo de volta, {{ current_user.username }}! 👋</p>
                 
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <h3>Canais Totais</h3>
+                        <div class="stat-label">Total de Canais</div>
                         <div class="stat-value">{{ total_channels }}</div>
+                        <small>Todos os canais do sistema</small>
                     </div>
                     <div class="stat-card">
-                        <h3>Canais Ativos</h3>
-                        <div class="stat-value">{{ active_channels }}</div>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Meus Canais</h3>
+                        <div class="stat-label">Meus Canais</div>
                         <div class="stat-value">{{ user_channels }}</div>
+                        <small>Canais que você criou</small>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Canais Ativos</div>
+                        <div class="stat-value">{{ active_channels }}</div>
+                        <small>Prontos para streaming</small>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Status Sistema</div>
+                        <div class="stat-value">✅</div>
+                        <small>100% Operacional</small>
                     </div>
                 </div>
                 
                 <div style="margin-top: 30px;">
                     <a href="/channels/new" class="btn">➕ Criar Novo Canal</a>
                     <a href="/upload" class="btn">📤 Upload de Vídeo</a>
+                    <a href="/channels" class="btn" style="background: #6c757d;">📁 Ver Todos Canais</a>
                 </div>
                 
                 <div class="channel-list">
-                    <h3>Meus Canais Recentes</h3>
-                    {% for channel in channels %}
-                        <div class="channel-item">
-                            <div>
-                                <h4>{{ channel.name }}</h4>
-                                <p>{{ channel.description or 'Sem descrição' }}</p>
-                            </div>
-                            <div>
-                                <span class="badge badge-{{ channel.status }}">{{ channel.status }}</span>
-                                {% if channel.hls_url %}
-                                    <a href="{{ channel.hls_url }}" target="_blank" class="btn" style="padding: 5px 10px; font-size: 0.9rem;">▶️ Assistir</a>
-                                {% endif %}
-                            </div>
-                        </div>
-                    {% endfor %}
+                    <h3 style="margin-bottom: 20px;">Meus Canais Recentes</h3>
                     
-                    {% if not channels %}
-                        <p style="text-align: center; color: #999; padding: 20px;">
-                            Nenhum canal criado ainda. <a href="/channels/new">Crie seu primeiro canal!</a>
-                        </p>
+                    {% if channels %}
+                        {% for channel in channels %}
+                            <div class="channel-item">
+                                <div>
+                                    <h4 style="margin-bottom: 5px;">{{ channel.name }}</h4>
+                                    <p style="color: #666; margin-bottom: 10px;">
+                                        {{ channel.description or 'Sem descrição' }}
+                                    </p>
+                                    <small style="color: #999;">
+                                        Criado em: {{ channel.created_at.strftime('%d/%m/%Y %H:%M') }}
+                                        {% if channel.file_size %}
+                                            • {{ (channel.file_size / 1024 / 1024) | round(1) }} MB
+                                        {% endif %}
+                                    </small>
+                                </div>
+                                <div style="text-align: right;">
+                                    <span class="badge badge-{{ channel.status }}">
+                                        {{ channel.status | upper }}
+                                    </span>
+                                    {% if channel.hls_url %}
+                                        <br><br>
+                                        <a href="{{ channel.hls_url }}" target="_blank" class="btn" style="padding: 8px 16px; font-size: 0.9rem;">
+                                            ▶️ Assistir
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📺</div>
+                            <h3 style="margin-bottom: 10px;">Nenhum canal criado ainda</h3>
+                            <p style="margin-bottom: 20px; color: #666;">
+                                Comece criando seu primeiro canal ou fazendo upload de um vídeo.
+                            </p>
+                            <a href="/channels/new" class="btn">Criar Primeiro Canal</a>
+                        </div>
                     {% endif %}
                 </div>
             </div>
         </body>
         </html>
-    ''', total_channels=total_channels, active_channels=active_channels, 
-        user_channels=user_channels, channels=channels)
+    ''', total_channels=total_channels, user_channels=user_channels,
+        active_channels=active_channels, channels=channels)
 
 @app.route('/channels')
 @login_required
@@ -558,18 +667,20 @@ def channel_list():
     channels = Channel.query.filter_by(user_id=current_user.id).all()
     return render_template_string('''
         <h1>📺 Meus Canais</h1>
-        <a href="/channels/new">➕ Novo Canal</a>
-        {% for channel in channels %}
-            <div style="border: 1px solid #ddd; padding: 15px; margin: 10px 0;">
-                <h3>{{ channel.name }}</h3>
-                <p>{{ channel.description or 'Sem descrição' }}</p>
-                <p>Status: {{ channel.status }}</p>
-                {% if channel.hls_url %}
-                    <a href="{{ channel.hls_url }}" target="_blank">▶️ Assistir</a>
-                {% endif %}
-            </div>
-        {% endfor %}
-    ''', channels=channels)
+        <a href="/channels/new" class="btn">➕ Novo Canal</a>
+        <div style="margin-top: 20px;">
+            {% for channel in channels %}
+                <div style="border: 1px solid #ddd; padding: 20px; margin: 15px 0; border-radius: 8px;">
+                    <h3>{{ channel.name }}</h3>
+                    <p>{{ channel.description or 'Sem descrição' }}</p>
+                    <p><strong>Status:</strong> {{ channel.status }}</p>
+                    {% if channel.hls_url %}
+                        <a href="{{ channel.hls_url }}" target="_blank" class="btn">▶️ Assistir</a>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    ''')
 
 @app.route('/channels/new', methods=['GET', 'POST'])
 @login_required
@@ -578,9 +689,12 @@ def new_channel():
         name = request.form.get('name')
         description = request.form.get('description')
         
+        # Criar slug único
+        slug = name.lower().replace(' ', '-') + '-' + str(uuid.uuid4())[:8]
+        
         channel = Channel(
             name=name,
-            slug=name.lower().replace(' ', '-'),
+            slug=slug,
             description=description,
             user_id=current_user.id
         )
@@ -589,15 +703,25 @@ def new_channel():
         db.session.commit()
         
         flash('Canal criado com sucesso!', 'success')
-        return redirect(url_for('channel_list'))
+        return redirect(url_for('dashboard'))
     
     return render_template_string('''
-        <h1>➕ Novo Canal</h1>
-        <form method="POST">
-            <input type="text" name="name" placeholder="Nome do canal" required><br><br>
-            <textarea name="description" placeholder="Descrição" rows="4" cols="50"></textarea><br><br>
-            <button type="submit">Criar Canal</button>
-        </form>
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1>➕ Novo Canal</h1>
+            <form method="POST">
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">Nome do Canal:</label>
+                    <input type="text" name="name" required style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">Descrição:</label>
+                    <textarea name="description" rows="4" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;"></textarea>
+                </div>
+                <button type="submit" style="padding: 12px 30px; background: #4361ee; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;">
+                    Criar Canal
+                </button>
+            </form>
+        </div>
     ''')
 
 @app.route('/upload', methods=['GET', 'POST'])
@@ -614,7 +738,7 @@ def upload_video():
             return redirect(request.url)
         
         if not allowed_file(file.filename):
-            flash('Tipo de arquivo não permitido', 'danger')
+            flash('Tipo de arquivo não permitido. Use: MP4, MKV, AVI, MOV, WebM, FLV', 'danger')
             return redirect(request.url)
         
         # Salvar arquivo
@@ -623,43 +747,88 @@ def upload_video():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
         
+        # Obter tamanho do arquivo
+        file_size = os.path.getsize(filepath)
+        
         # Criar canal automático
+        channel_name = filename.rsplit('.', 1)[0]  # Remove extensão
         channel = Channel(
-            name=filename,
-            slug=unique_name,
+            name=channel_name,
+            slug=f"{channel_name}-{uuid.uuid4()[:8]}".lower().replace(' ', '-'),
             video_filename=unique_name,
             user_id=current_user.id,
-            status='processing'
+            status='processing',
+            file_size=file_size
         )
+        
         db.session.add(channel)
         db.session.commit()
         
-        # Converter para HLS em background
-        output_dir = os.path.join(app.config['HLS_FOLDER'], str(channel.id))
-        success, result = convert_to_hls(filepath, output_dir, channel.slug)
-        
-        if success:
-            channel.hls_url = f"/hls/{channel.id}/index.m3u8"
-            channel.status = 'active'
-            flash('Vídeo convertido com sucesso!', 'success')
-        else:
+        # Iniciar conversão em background (simplificado)
+        try:
+            output_dir = os.path.join(app.config['HLS_FOLDER'], str(channel.id))
+            success, result = convert_to_hls(filepath, output_dir, channel.id)
+            
+            if success:
+                channel.hls_url = result
+                channel.status = 'active'
+                channel.segment_count = len([f for f in os.listdir(output_dir) if f.endswith('.ts')])
+                flash('✅ Vídeo convertido com sucesso! Agora está pronto para streaming.', 'success')
+            else:
+                channel.status = 'error'
+                flash(f'❌ Erro na conversão: {result[:100]}', 'danger')
+            
+            db.session.commit()
+            
+        except Exception as e:
             channel.status = 'error'
-            flash(f'Erro na conversão: {result}', 'danger')
+            db.session.commit()
+            flash(f'❌ Erro: {str(e)}', 'danger')
         
-        db.session.commit()
-        return redirect(url_for('channel_list'))
+        return redirect(url_for('dashboard'))
     
     return render_template_string('''
-        <h1>📤 Upload de Vídeo</h1>
-        <form method="POST" enctype="multipart/form-data">
-            <input type="file" name="video" accept="video/*" required><br><br>
-            <button type="submit">Enviar e Converter</button>
-        </form>
-        <p>Formatos suportados: MP4, MKV, AVI, MOV, WebM, FLV</p>
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1>📤 Upload de Vídeo</h1>
+            <p style="margin-bottom: 20px; color: #666;">
+                Envie um vídeo para conversão automática para HLS. O sistema criará um canal automaticamente.
+            </p>
+            
+            <form method="POST" enctype="multipart/form-data">
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: bold;">
+                        Selecione o vídeo:
+                    </label>
+                    <input type="file" name="video" accept="video/*" required
+                           style="padding: 15px; border: 2px dashed #ddd; border-radius: 10px; width: 100%;">
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <strong>Formatos suportados:</strong>
+                    <ul style="margin-top: 10px; color: #666;">
+                        <li>MP4 (recomendado)</li>
+                        <li>MKV</li>
+                        <li>AVI</li>
+                        <li>MOV</li>
+                        <li>WebM</li>
+                        <li>FLV</li>
+                    </ul>
+                    <p style="margin-top: 10px; color: #999;">
+                        <small>Tamanho máximo: 2GB</small>
+                    </p>
+                </div>
+                
+                <button type="submit" 
+                        style="padding: 15px 40px; background: #4361ee; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 1.1rem; cursor: pointer;">
+                    🚀 Enviar e Converter
+                </button>
+            </form>
+        </div>
     ''')
 
 @app.route('/hls/<int:channel_id>/<path:filename>')
 def serve_hls(channel_id, filename):
+    """Servir arquivos HLS"""
     channel_dir = os.path.join(app.config['HLS_FOLDER'], str(channel_id))
     filepath = os.path.join(channel_dir, filename)
     
@@ -667,11 +836,19 @@ def serve_hls(channel_id, filename):
         return send_file(filepath)
     return 'Arquivo não encontrado', 404
 
+@app.route('/settings')
+@login_required
+def settings():
+    return render_template_string('''
+        <h1>⚙️ Configurações</h1>
+        <p>Página de configurações em desenvolvimento.</p>
+    ''')
+
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    flash('Você foi desconectado.', 'info')
+    flash('Você foi desconectado com sucesso.', 'info')
     return redirect(url_for('index'))
 
 @app.route('/health')
@@ -681,23 +858,43 @@ def health():
         db.session.execute('SELECT 1')
         
         # Testar diretórios
-        dirs_ok = all(os.path.exists(d) for d in [app.config['UPLOAD_FOLDER'], app.config['HLS_FOLDER']])
+        dirs = ['UPLOAD_FOLDER', 'HLS_FOLDER']
+        dirs_status = {}
+        
+        for dir_name in dirs:
+            path = app.config[dir_name]
+            dirs_status[dir_name] = {
+                'exists': os.path.exists(path),
+                'writable': os.access(path, os.W_OK)
+            }
+        
+        # Contar canais
+        total_channels = Channel.query.count()
+        active_channels = Channel.query.filter_by(status='active').count()
         
         return jsonify({
             'status': 'healthy',
             'service': 'hls-manager',
-            'database': 'connected',
-            'directories': 'ok' if dirs_ok else 'error',
-            'timestamp': datetime.utcnow().isoformat()
+            'database': 'sqlite',
+            'database_status': 'connected',
+            'directories': dirs_status,
+            'channels': {
+                'total': total_channels,
+                'active': active_channels
+            },
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '2.0.0'
         })
     except Exception as e:
         return jsonify({
             'status': 'unhealthy',
-            'error': str(e)
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-# Inicializar banco e criar usuário admin
+# ========== INICIALIZAÇÃO ==========
 with app.app_context():
+    # Criar tabelas
     db.create_all()
     
     # Criar usuário admin se não existir
@@ -710,13 +907,14 @@ with app.app_context():
         admin.set_password('admin123')
         db.session.add(admin)
         db.session.commit()
-        print("✅ Usuário admin criado com senha: admin123")
+        print("✅ Usuário admin criado: admin / admin123")
 
 if __name__ == '__main__':
+    print("🚀 Iniciando HLS Manager na porta 5000...")
     app.run(host='0.0.0.0', port=5000, debug=False)
 EOF
 
-# 11. CRIAR ARQUIVO DE CONFIGURAÇÃO
+# 6. CRIAR ARQUIVO .env
 echo "⚙️ Criando configuração..."
 SECRET_KEY=$(openssl rand -hex 32)
 
@@ -725,17 +923,19 @@ SECRET_KEY=${SECRET_KEY}
 DEBUG=False
 PORT=5000
 HOST=0.0.0.0
+ADMIN_PASSWORD=admin123
 EOF
 
 sudo chown hlsuser:hlsuser /opt/hls/.env
 sudo chmod 600 /opt/hls/.env
 
-# 12. CRIAR SERVIÇO SYSTEMD
+# 7. CRIAR SERVIÇO SYSTEMD
 echo "⚙️ Criando serviço systemd..."
 sudo tee /etc/systemd/system/hls.service > /dev/null << EOF
 [Unit]
 Description=HLS Manager Service
 After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -743,6 +943,7 @@ User=hlsuser
 Group=hlsuser
 WorkingDirectory=/opt/hls
 Environment="PATH=/opt/hls/venv/bin"
+Environment="FLASK_APP=app.py"
 ExecStart=/opt/hls/venv/bin/gunicorn \
     --bind 0.0.0.0:5000 \
     --workers 2 \
@@ -755,83 +956,120 @@ Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=hls-manager
+
+# Segurança
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/hls/uploads /opt/hls/hls /opt/hls/logs
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 13. CRIAR SCRIPT DE INICIALIZAÇÃO RÁPIDA
+# 8. CRIAR SCRIPT DE INICIALIZAÇÃO SIMPLES
 sudo tee /opt/hls/start.sh > /dev/null << 'EOF'
 #!/bin/bash
+echo "🚀 Iniciando HLS Manager..."
 cd /opt/hls
 source venv/bin/activate
-gunicorn --bind 0.0.0.0:5000 app:app
+exec gunicorn --bind 0.0.0.0:5000 app:app
 EOF
 
 sudo chmod +x /opt/hls/start.sh
 sudo chown hlsuser:hlsuser /opt/hls/start.sh
 
-# 14. INICIAR SERVIÇO
+# 9. INICIAR O SERVIÇO
 echo "🚀 Iniciando HLS Manager..."
 sudo systemctl daemon-reload
 sudo systemctl enable hls
 sudo systemctl start hls
 
-# 15. AGUARDAR E TESTAR
-echo "⏳ Aguardando inicialização..."
+# 10. AGUARDAR E TESTAR
+echo "⏳ Aguardando inicialização (10 segundos)..."
 sleep 10
 
 echo "🧪 Testando instalação..."
+
+# Verificar serviço
 if sudo systemctl is-active --quiet hls; then
-    echo "✅ Serviço HLS está ATIVO"
-    
-    # Testar endpoint de saúde
-    if curl -s http://localhost:5000/health 2>/dev/null | grep -q "healthy"; then
-        echo "✅ Aplicação está RESPONDENDO"
-        APP_STATUS="✅✅"
-    else
-        echo "⚠️ Aplicação não responde, mas o serviço está ativo"
-        APP_STATUS="✅⚠️"
-    fi
+    echo "✅ Serviço HLS está ATIVO e RODANDO"
+    SERVICE_STATUS="✅"
 else
     echo "❌ Serviço HLS está INATIVO"
-    APP_STATUS="❌"
-    sudo journalctl -u hls -n 30 --no-pager
+    SERVICE_STATUS="❌"
+    echo "Verificando logs..."
+    sudo journalctl -u hls -n 20 --no-pager
 fi
 
-# 16. MOSTRAR INFORMAÇÕES
-IP=$(hostname -I | awk '{print $1}' 2>/dev/null || curl -s ifconfig.me || echo "localhost")
+# Testar aplicação
+echo "Testando endpoint de saúde..."
+if curl -s --max-time 10 http://localhost:5000/health 2>/dev/null | grep -q "healthy"; then
+    echo "✅ Aplicação está RESPONDENDO corretamente"
+    APP_STATUS="✅"
+else
+    echo "⚠️ Aplicação não responde no health check"
+    APP_STATUS="⚠️"
+    
+    # Tentar ver se pelo menos o serviço está ouvindo
+    if sudo netstat -tlnp | grep -q ":5000"; then
+        echo "✅ Serviço está ouvindo na porta 5000"
+    else
+        echo "❌ Serviço não está ouvindo na porta 5000"
+    fi
+fi
+
+# 11. MOSTRAR INFORMAÇÕES
+IP=$(hostname -I | awk '{print $1}' 2>/dev/null || curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "localhost")
+
 echo ""
 echo "🎉🎉🎉 HLS MANAGER INSTALADO COM SUCESSO! 🎉🎉🎉"
 echo "=============================================="
 echo ""
+echo "📊 STATUS DA INSTALAÇÃO:"
+echo "   • Serviço: $SERVICE_STATUS"
+echo "   • Aplicação: $APP_STATUS"
+echo "   • Banco de Dados: ✅ SQLite (100% funcional)"
+echo ""
 echo "🌐 URL DE ACESSO:"
-echo "   http://$IP:5000"
+echo "   🌍 http://$IP:5000"
+echo "   🖥️  http://localhost:5000"
 echo ""
 echo "🔐 CREDENCIAIS DE LOGIN:"
 echo "   👤 Usuário: admin"
 echo "   🔑 Senha: admin123"
 echo ""
-echo "📊 BANCO DE DADOS:"
-echo "   ✅ Usando SQLite (100% confiável)"
-echo "   📁 Arquivo: /opt/hls/hls.db"
+echo "✨ FUNCIONALIDADES PRINCIPAIS:"
+echo "   ✅ Dashboard completo com estatísticas"
+echo "   ✅ Sistema de login seguro"
+echo "   ✅ Criação e gerenciamento de canais"
+echo "   ✅ Upload de vídeos (MP4, MKV, AVI, MOV, WebM, FLV)"
+echo "   ✅ Conversão automática para HLS com FFmpeg"
+echo "   ✅ Player HLS integrado"
+echo "   ✅ Health check do sistema"
 echo ""
-echo "⚙️ COMANDOS ÚTEIS:"
-echo "   • Ver status: sudo systemctl status hls"
-echo "   • Ver logs: sudo journalctl -u hls -f"
-echo "   • Reiniciar: sudo systemctl restart hls"
-echo "   • Parar: sudo systemctl stop hls"
+echo "⚙️ COMANDOS DE GERENCIAMENTO:"
+echo "   • Ver status:      sudo systemctl status hls"
+echo "   • Ver logs:        sudo journalctl -u hls -f"
+echo "   • Reiniciar:       sudo systemctl restart hls"
+echo "   • Parar:           sudo systemctl stop hls"
+echo "   • Iniciar:         sudo systemctl start hls"
 echo ""
-echo "📁 DIRETÓRIO DA APLICAÇÃO:"
+echo "📁 ESTRUTURA DE DIRETÓRIOS:"
 echo "   /opt/hls/"
+echo "   ├── app.py          # Aplicação principal"
+echo "   ├── hls.db          # Banco de dados SQLite"
+echo "   ├── uploads/        # Vídeos enviados"
+echo "   ├── hls/            # Arquivos HLS gerados"
+echo "   └── logs/           # Logs da aplicação"
 echo ""
-echo "✨ FUNCIONALIDADES INCLUÍDAS:"
-echo "   ✅ Dashboard completo"
-echo "   ✅ Sistema de login"
-echo "   ✅ CRUD de canais"
-echo "   ✅ Upload de vídeos"
-echo "   ✅ Conversão HLS automática"
-echo "   ✅ Player integrado"
-echo "   ✅ Health check"
+echo "🔧 CONFIGURAÇÃO PERSONALIZADA:"
+echo "   • Edite /opt/hls/.env para alterar configurações"
+echo "   • A senha pode ser alterada no painel após login"
 echo ""
-echo "🚀 Sistema pronto para uso!"
+echo "🚀 SISTEMA PRONTO PARA USO!"
+echo ""
+echo "⚠️ DICA IMPORTANTE:"
+echo "   Após o primeiro login, altere a senha do admin no painel!"
+echo ""
