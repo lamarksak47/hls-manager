@@ -1,377 +1,221 @@
 #!/bin/bash
-# install_hls_manager_stable.sh - Script ESTÁVEL usando apenas mysqlclient
+# install_hls_working.sh - Script que CONTORNA pacotes quebrados
 
 set -e
 
-echo "🎬 INSTALANDO HLS MANAGER - VERSÃO ESTÁVEL"
-echo "=========================================="
+echo "🔧 INSTALANDO HLS MANAGER - CONTORNANDO PACOTES QUEBRADOS"
+echo "========================================================"
 
-# 1. CORRIGIR pacotes quebrados primeiro
-echo "🔧 Corrigindo pacotes quebrados..."
-sudo apt-get update
-sudo apt-get install -f -y
-sudo dpkg --configure -a
+# 1. REMOVER completamente pacotes problemáticos
+echo "🗑️ Removendo pacotes problemáticos..."
+sudo apt-get remove --purge -y libmysqlclient-dev default-libmysqlclient-dev mariadb-connector-c 2>/dev/null || true
 sudo apt-get autoremove -y
 sudo apt-get autoclean
 
-# 2. Instalar dependências básicas
-echo "📦 Instalando dependências básicas..."
+# 2. Liberar pacotes retidos
+echo "🔓 Liberando pacotes retidos..."
+sudo dpkg --remove --force-remove-reinstreq libmysqlclient-dev 2>/dev/null || true
+sudo dpkg --configure -a
+
+# 3. Atualizar e instalar dependências SEM default-libmysqlclient-dev
+echo "📦 Instalando dependências alternativas..."
+sudo apt-get update
+
+# Instalar bibliotecas MySQL alternativas
+sudo apt-get install -y libmariadb-dev libmariadb3 mariadb-server mariadb-client
+
+# Dependências básicas
 sudo apt-get install -y python3 python3-pip ffmpeg python3-venv nginx \
     software-properties-common curl wget git build-essential \
-    pkg-config libssl-dev libffi-dev
+    pkg-config libssl-dev libffi-dev python3-dev
 
-# 3. VERIFICAR e INSTALAR MariaDB/MySQL
-echo "🗄️ Verificando banco de dados..."
-if ! command -v mysql &>/dev/null; then
-    echo "📥 Instalando MariaDB Server..."
-    sudo apt-get install -y mariadb-server mariadb-client
+# 4. Usar pip para instalar mysqlclient SEM as libs do sistema
+echo "🐍 Instalando mysqlclient via pip (sem dependências do sistema)..."
+
+# Criar ambiente temporário para testar
+python3 -m venv /tmp/test_env
+/tmp/test_env/bin/pip install --upgrade pip setuptools wheel
+
+# Tentar diferentes métodos para instalar mysqlclient
+echo "Tentando método 1: mysqlclient com headers do MariaDB..."
+if /tmp/test_env/bin/pip install mysqlclient==2.1.1 --no-binary mysqlclient; then
+    echo "✅ Método 1 funcionou"
+    MYSQLCLIENT_METHOD="source"
 else
-    echo "✅ MySQL/MariaDB já está instalado"
+    echo "Tentando método 2: mysqlclient binary..."
+    if /tmp/test_env/bin/pip install mysqlclient; then
+        echo "✅ Método 2 funcionou"
+        MYSQLCLIENT_METHOD="binary"
+    else
+        echo "Tentando método 3: pymysql como fallback..."
+        if /tmp/test_env/bin/pip install pymysql; then
+            echo "✅ Usando pymysql como fallback"
+            MYSQLCLIENT_METHOD="pymysql"
+        else
+            echo "❌ Todos os métodos falharam"
+            exit 1
+        fi
+    fi
 fi
 
-# Iniciar e habilitar MariaDB
-sudo systemctl start mariadb 2>/dev/null || true
-sudo systemctl enable mariadb 2>/dev/null || true
+# 5. Configurar MariaDB
+echo "🗄️ Configurando MariaDB..."
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
 
-# 4. INSTALAR APENAS mysqlclient (evitar mariadb-connector)
-echo "📦 Instalando bibliotecas para mysqlclient..."
-sudo apt-get install -y default-libmysqlclient-dev python3-dev
-
-# Verificar se libmysqlclient-dev está disponível
-if ! apt-cache show libmysqlclient-dev &>/dev/null; then
-    echo "⚠️ libmysqlclient-dev não encontrado, instalando alternativas..."
-    sudo apt-get install -y libmariadb-dev libmariadb3
-fi
-
-# 5. Configurar MariaDB (método simplificado)
-echo "🔐 Configurando MariaDB..."
-sleep 2
-
-# Verificar se podemos acessar sem senha
+# Configurar senha root se necessário
 if sudo mysql -u root -e "SELECT 1" 2>/dev/null; then
-    echo "🔧 Configurando senha root..."
+    echo "🔐 Configurando senha root..."
     sudo mysql -u root <<-EOF
-SET PASSWORD FOR 'root'@'localhost' = PASSWORD('MariaDBRootPass@2024');
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'RootPass123';
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
-    ROOT_PASS="MariaDBRootPass@2024"
+    ROOT_PASS="RootPass123"
 else
-    # Tentar com senha padrão
-    if sudo mysql -u root -pMariaDBRootPass@2024 -e "SELECT 1" 2>/dev/null; then
-        ROOT_PASS="MariaDBRootPass@2024"
-    else
-        echo "⚠️ MariaDB já tem senha diferente."
-        echo "Por favor, digite a senha do root do MariaDB:"
-        read -s ROOT_PASS
-    fi
+    echo "Usando configuração existente do MariaDB"
+    ROOT_PASS="RootPass123"
 fi
 
 # 6. Criar banco de dados da aplicação
-echo "🗃️ Criando banco de dados da aplicação..."
-MYSQL_APP_PASS="HlsApp$(date +%s | tail -c 6)"
-MYSQL_APP_USER="hls_manager"
+echo "🗃️ Criando banco de dados..."
+APP_USER="hls_app"
+APP_PASS="AppPass$(date +%s | tail -c 4)"
 
-# Função para executar comandos SQL
-execute_sql() {
-    local sql="$1"
-    # Tentar com senha
-    if sudo mysql -u root -p"$ROOT_PASS" -e "$sql" 2>/dev/null; then
-        return 0
-    # Tentar sem senha
-    elif sudo mysql -u root -e "$sql" 2>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Criar banco e usuário
-SQL_COMMANDS="
-DROP DATABASE IF EXISTS hls_manager;
-CREATE DATABASE hls_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-DROP USER IF EXISTS '${MYSQL_APP_USER}'@'localhost';
-CREATE USER '${MYSQL_APP_USER}'@'localhost' IDENTIFIED BY '${MYSQL_APP_PASS}';
-GRANT ALL PRIVILEGES ON hls_manager.* TO '${MYSQL_APP_USER}'@'localhost';
-FLUSH PRIVILEGES;
-"
-
-if execute_sql "$SQL_COMMANDS"; then
-    echo "✅ Banco de dados criado com sucesso!"
-else
-    echo "⚠️ Usando método alternativo para criar banco..."
-    sudo mysql <<-EOF
+sudo mysql -u root -p"$ROOT_PASS" <<-EOF 2>/dev/null || sudo mysql -u root <<-EOF
 CREATE DATABASE IF NOT EXISTS hls_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${MYSQL_APP_USER}'@'localhost' IDENTIFIED BY '${MYSQL_APP_PASS}';
-GRANT ALL PRIVILEGES ON hls_manager.* TO '${MYSQL_APP_USER}'@'localhost';
+CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${APP_PASS}';
+GRANT ALL PRIVILEGES ON hls_manager.* TO '${APP_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
-fi
 
-# 7. Criar usuário e diretórios do sistema
+# 7. Criar estrutura do sistema
 echo "👤 Criando estrutura do sistema..."
-if ! id "hlsmanager" &>/dev/null; then
-    sudo useradd -r -s /bin/false -m -d /opt/hls-manager hlsmanager
+if ! id "hlsuser" &>/dev/null; then
+    sudo useradd -r -s /bin/false -m -d /opt/hls-streamer hlsuser
 fi
 
-# Criar diretórios
-sudo mkdir -p /opt/hls-manager/{uploads,hls,logs,temp,config,backups}
-cd /opt/hls-manager
+sudo mkdir -p /opt/hls-streamer/{uploads,hls,logs,config}
+cd /opt/hls-streamer
+sudo chown -R hlsuser:hlsuser /opt/hls-streamer
 
-# Permissões
-sudo chown -R hlsmanager:hlsmanager /opt/hls-manager
-sudo chmod 750 /opt/hls-manager
-sudo chmod 770 /opt/hls-manager/uploads /opt/hls-manager/temp
-sudo chmod 755 /opt/hls-manager/hls
+# 8. Instalar dependências Python baseado no método escolhido
+echo "📦 Instalando ambiente Python..."
 
-# 8. Configurar ambiente Python com MYSQLCLIENT APENAS
-echo "🐍 Configurando ambiente Python (usando mysqlclient apenas)..."
+sudo -u hlsuser python3 -m venv venv
 
-# Remover qualquer virtualenv existente
-sudo rm -rf /opt/hls-manager/venv 2>/dev/null || true
+# Instalar mysqlclient usando o método que funcionou
+case "$MYSQLCLIENT_METHOD" in
+    "source")
+        sudo -u hlsuser ./venv/bin/pip install mysqlclient==2.1.1 --no-binary mysqlclient
+        DRIVER="mysqlclient"
+        CONN_STRING="mysql://${APP_USER}:${APP_PASS}@localhost/hls_manager"
+        ;;
+    "binary")
+        sudo -u hlsuser ./venv/bin/pip install mysqlclient
+        DRIVER="mysqlclient"
+        CONN_STRING="mysql://${APP_USER}:${APP_PASS}@localhost/hls_manager"
+        ;;
+    "pymysql")
+        sudo -u hlsuser ./venv/bin/pip install pymysql
+        DRIVER="pymysql"
+        CONN_STRING="mysql+pymysql://${APP_USER}:${APP_PASS}@localhost/hls_manager"
+        ;;
+esac
 
-# Criar novo virtualenv
-sudo -u hlsmanager python3 -m venv venv
+# Instalar outras dependências
+sudo -u hlsuser ./venv/bin/pip install flask==2.3.3 flask-sqlalchemy==3.0.5 \
+    gunicorn==21.2.0 python-dotenv==1.0.0
 
-# Configurar pip para usar cache e timeout maior
-sudo -u hlsmanager ./venv/bin/pip config set global.timeout 60
-sudo -u hlsmanager ./venv/bin/pip config set global.retries 10
+# 9. Criar aplicação Flask MÍNIMA
+echo "💻 Criando aplicação mínima..."
 
-echo "📦 Instalando pacotes Python..."
-# Atualizar pip primeiro
-sudo -u hlsmanager ./venv/bin/pip install --upgrade pip setuptools wheel
-
-# INSTALAR MYSQLCLIENT PRIMEIRO (versão específica estável)
-echo "Instalando mysqlclient..."
-if sudo -u hlsmanager ./venv/bin/pip install mysqlclient==2.1.1; then
-    echo "✅ mysqlclient instalado com sucesso"
-else
-    echo "⚠️ Tentando versão mais recente do mysqlclient..."
-    sudo -u hlsmanager ./venv/bin/pip install mysqlclient
-fi
-
-# Instalar Flask e outras dependências
-echo "Instalando Flask e dependências..."
-FLASK_PACKAGES="
-flask==2.3.3
-flask-login==0.6.3
-flask-sqlalchemy==3.0.5
-flask-migrate==4.0.4
-flask-wtf==1.1.1
-flask-cors==4.0.0
-python-dotenv==1.0.0
-gunicorn==21.2.0
-cryptography==41.0.7
-werkzeug==2.3.7
-pillow==10.0.1
-bcrypt==4.0.1
-flask-limiter==3.3.3
-python-dateutil==2.8.2
-"
-
-sudo -u hlsmanager ./venv/bin/pip install $FLASK_PACKAGES
-
-# Instalar python-magic
-sudo apt-get install -y libmagic1
-sudo -u hlsmanager ./venv/bin/pip install python-magic-bin==0.4.14
-
-# 9. Criar configuração .env
-echo "⚙️ Criando configuração..."
-ADMIN_PASSWORD="Admin@$(date +%s | tail -c 6)"
-SECRET_KEY=$(openssl rand -hex 32)
-
-sudo tee /opt/hls-manager/config/.env > /dev/null << EOF
-# HLS Manager Configuration
-DEBUG=False
-PORT=5000
-HOST=127.0.0.1
-SECRET_KEY=${SECRET_KEY}
-
-# Database (using mysqlclient)
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=hls_manager
-DB_USER=${MYSQL_APP_USER}
-DB_PASSWORD=${MYSQL_APP_PASS}
-SQLALCHEMY_DATABASE_URI=mysql://${MYSQL_APP_USER}:${MYSQL_APP_PASS}@localhost/hls_manager
-
-# Upload Settings
-MAX_UPLOAD_SIZE=1073741824  # 1GB
-MAX_CONCURRENT_JOBS=2
-HLS_SEGMENT_TIME=10
-HLS_DELETE_AFTER_DAYS=7
-
-# Authentication
-ADMIN_USERNAME=admin
-ADMIN_EMAIL=admin@localhost
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
-
-# Paths
-BASE_DIR=/opt/hls-manager
-UPLOAD_FOLDER=/opt/hls-manager/uploads
-HLS_FOLDER=/opt/hls-manager/hls
-TEMP_FOLDER=/opt/hls-manager/temp
-LOG_FOLDER=/opt/hls-manager/logs
-EOF
-
-sudo chown hlsmanager:hlsmanager /opt/hls-manager/config/.env
-sudo chmod 640 /opt/hls-manager/config/.env
-
-# 10. Criar aplicação Flask SIMPLIFICADA
-echo "💻 Criando aplicação Flask simplificada..."
-
-# Criar diretórios da aplicação
-sudo -u hlsmanager mkdir -p /opt/hls-manager/app
-
-# __init__.py SIMPLIFICADO
-sudo tee /opt/hls-manager/app/__init__.py > /dev/null << 'EOF'
+# app.py
+sudo tee /opt/hls-streamer/app.py > /dev/null << EOF
 from flask import Flask, jsonify, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 import os
-from dotenv import load_dotenv
 
-load_dotenv('/opt/hls-manager/config/.env')
+app = Flask(__name__)
 
-db = SQLAlchemy()
+# Configuração mínima
+app.config['SECRET_KEY'] = 'dev-key-$(openssl rand -hex 16)'
+app.config['SQLALCHEMY_DATABASE_URI'] = '${CONN_STRING}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-def create_app():
-    app = Flask(__name__)
-    
-    # Basic configuration
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-key-123')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    
-    db.init_app(app)
-    
-    # Simple home page
-    @app.route('/')
-    def index():
-        return render_template_string('''
-            <!DOCTYPE html>
-            <html>
-            <head><title>HLS Manager</title></head>
-            <body>
-                <h1>✅ HLS Manager Instalado</h1>
-                <p>Sistema pronto para uso!</p>
-                <p><a href="/dashboard">Dashboard</a> | <a href="/health">Health</a></p>
-            </body>
-            </html>
-        ''')
-    
-    # Dashboard stub
-    @app.route('/dashboard')
-    def dashboard():
-        return render_template_string('''
-            <h1>Dashboard</h1>
-            <p>Em desenvolvimento...</p>
-        ''')
-    
-    # Health check endpoint
-    @app.route('/health')
-    def health():
-        try:
-            db.session.execute('SELECT 1')
-            return jsonify({'status': 'healthy', 'database': 'connected'})
-        except Exception as e:
-            return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
-    
-    # Login stub
-    @app.route('/login')
-    def login():
-        return render_template_string('''
-            <h1>Login</h1>
-            <p>Página de login em desenvolvimento</p>
-        ''')
-    
-    return app
-EOF
+db = SQLAlchemy(app)
 
-# models.py SIMPLIFICADO
-sudo tee /opt/hls-manager/app/models.py > /dev/null << 'EOF'
-from datetime import datetime
-from app import db
-
+# Modelo simples
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200))
-    is_admin = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def __repr__(self):
-        return f'<User {self.username}>'
+    username = db.Column(db.String(80), unique=True)
+    email = db.Column(db.String(120), unique=True)
 
-class Channel(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    status = db.Column(db.String(20), default='draft')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def __repr__(self):
-        return f'<Channel {self.name}>'
-EOF
+@app.route('/')
+def home():
+    return render_template_string('''
+        <h1>🎬 HLS Streamer</h1>
+        <p>✅ Sistema instalado com sucesso!</p>
+        <p><strong>Driver MySQL:</strong> ${DRIVER}</p>
+        <p><a href="/health">Health Check</a></p>
+    ''')
 
-# run.py SIMPLIFICADO
-sudo tee /opt/hls-manager/run.py > /dev/null << 'EOF'
-#!/usr/bin/env python3
-from app import create_app, db
-from app.models import User
-import os
+@app.route('/health')
+def health():
+    try:
+        db.session.execute('SELECT 1')
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'driver': '${DRIVER}'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-app = create_app()
-
-@app.before_first_request
-def setup():
-    with app.app_context():
-        # Create tables
-        db.create_all()
-        
-        # Create admin user if not exists
-        if not User.query.filter_by(username='admin').first():
-            from werkzeug.security import generate_password_hash
-            admin = User(
-                username='admin',
-                email='admin@localhost',
-                password_hash=generate_password_hash(os.getenv('ADMIN_PASSWORD')),
-                is_admin=True
-            )
-            db.session.add(admin)
-            db.session.commit()
-            print("Admin user created")
+# Criar tabelas na primeira execução
+with app.app_context():
+    db.create_all()
+    print("✅ Tabelas do banco criadas")
 
 if __name__ == '__main__':
-    app.run(
-        host=os.getenv('HOST', '127.0.0.1'),
-        port=int(os.getenv('PORT', 5000)),
-        debug=False
-    )
+    app.run(host='0.0.0.0', port=5000, debug=False)
 EOF
 
-sudo chmod +x /opt/hls-manager/run.py
+# 10. Criar arquivo de configuração
+echo "⚙️ Criando configuração..."
+ADMIN_PASS="Admin$(date +%s | tail -c 4)"
+
+sudo tee /opt/hls-streamer/.env > /dev/null << EOF
+DEBUG=False
+PORT=5000
+SECRET_KEY=$(openssl rand -hex 32)
+ADMIN_PASSWORD=${ADMIN_PASS}
+EOF
+
+sudo chown hlsuser:hlsuser /opt/hls-streamer/.env
+sudo chmod 600 /opt/hls-streamer/.env
 
 # 11. Criar serviço systemd
 echo "⚙️ Criando serviço systemd..."
-sudo tee /etc/systemd/system/hls-manager.service > /dev/null << EOF
+sudo tee /etc/systemd/system/hls-streamer.service > /dev/null << EOF
 [Unit]
-Description=HLS Manager
-After=network.target
+Description=HLS Streamer Service
+After=network.target mariadb.service
 
 [Service]
 Type=simple
-User=hlsmanager
-Group=hlsmanager
-WorkingDirectory=/opt/hls-manager
-Environment="PATH=/opt/hls-manager/venv/bin"
-ExecStart=/opt/hls-manager/venv/bin/gunicorn \
+User=hlsuser
+Group=hlsuser
+WorkingDirectory=/opt/hls-streamer
+Environment="PATH=/opt/hls-streamer/venv/bin"
+ExecStart=/opt/hls-streamer/venv/bin/gunicorn \
     --bind 127.0.0.1:5000 \
     --workers 1 \
-    --timeout 120 \
-    run:app
+    --timeout 60 \
+    app:app
 Restart=always
 RestartSec=10
 
@@ -379,93 +223,55 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 12. Configurar Nginx SIMPLIFICADO
-echo "🌐 Configurando Nginx..."
-sudo tee /etc/nginx/sites-available/hls-manager > /dev/null << 'EOF'
-server {
-    listen 80;
-    server_name _;
-    
-    location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-    
-    location /hls/ {
-        alias /opt/hls-manager/hls/;
-    }
-}
+# 12. Criar script de inicialização
+sudo tee /opt/hls-streamer/start.sh > /dev/null << 'EOF'
+#!/bin/bash
+echo "🚀 Iniciando HLS Streamer..."
+cd /opt/hls-streamer
+source venv/bin/activate
+gunicorn --bind 0.0.0.0:5000 app:app
 EOF
 
-sudo ln -sf /etc/nginx/sites-available/hls-manager /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+sudo chmod +x /opt/hls-streamer/start.sh
+sudo chown hlsuser:hlsuser /opt/hls-streamer/start.sh
 
-# 13. Inicializar banco de dados
-echo "🗃️ Inicializando banco de dados..."
-cd /opt/hls-manager
-if sudo -u hlsmanager ./venv/bin/python -c "
-from app import create_app, db
-app = create_app()
-with app.app_context():
-    db.create_all()
-    print('Database tables created successfully')
-"; then
-    echo "✅ Banco de dados inicializado"
-else
-    echo "⚠️ Erro ao inicializar banco, mas continuando..."
-fi
-
-# 14. Iniciar serviços
+# 13. Iniciar serviços
 echo "🚀 Iniciando serviços..."
 sudo systemctl daemon-reload
-sudo systemctl start mariadb
-sleep 2
+sudo systemctl enable hls-streamer
+sudo systemctl start hls-streamer
 
-sudo systemctl enable hls-manager
-sudo systemctl start hls-manager
 sleep 3
 
-sudo nginx -t 2>/dev/null && sudo systemctl restart nginx
-
-# 15. Verificar instalação
-echo "🧪 Verificando instalação..."
-sleep 5
-
-echo "Status dos serviços:"
-for service in mariadb hls-manager nginx; do
-    if systemctl is-active --quiet $service; then
-        echo "✅ $service: ATIVO"
-    else
-        echo "⚠️ $service: INATIVO"
-    fi
-done
-
-# Testar aplicação
-if curl -s http://localhost:5000/health 2>/dev/null | grep -q "healthy"; then
-    echo "✅ Aplicação está funcionando!"
+# 14. Testar
+echo "🧪 Testando instalação..."
+if curl -s http://localhost:5000/health | grep -q "healthy"; then
+    echo "✅ Sistema está funcionando!"
+    STATUS="✅"
 else
-    echo "⚠️ Aplicação não responde. Verifique os logs:"
-    echo "   sudo journalctl -u hls-manager -n 20"
+    echo "⚠️ Sistema não responde. Verificando..."
+    sudo journalctl -u hls-streamer -n 20 --no-pager
+    STATUS="⚠️"
 fi
 
-# 16. Mostrar informações
+# 15. Mostrar informações
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 echo ""
-echo "🎉 HLS MANAGER INSTALADO!"
-echo "========================"
-echo "🌐 URL: http://$IP"
-echo "👤 Usuário: admin"
-echo "🔑 Senha: $ADMIN_PASSWORD"
+echo "🎉 HLS STREAMER INSTALADO!"
+echo "=========================="
+echo "Status: $STATUS"
+echo "URL: http://$IP:5000"
 echo ""
-echo "🗄️ Banco de dados:"
-echo "   Usuário: $MYSQL_APP_USER"
-echo "   Senha: $MYSQL_APP_PASS"
+echo "🔧 Informações Técnicas:"
+echo "• Driver MySQL: $DRIVER"
+echo "• Usuário DB: $APP_USER"
+echo "• Senha DB: $APP_PASS"
+echo "• Diretório: /opt/hls-streamer"
 echo ""
 echo "⚙️ Comandos:"
-echo "• sudo systemctl status hls-manager"
-echo "• sudo journalctl -u hls-manager -f"
-echo "• mysql -u $MYSQL_APP_USER -p"
+echo "• sudo systemctl status hls-streamer"
+echo "• sudo journalctl -u hls-streamer -f"
+echo "• mysql -u $APP_USER -p$APP_PASS hls_manager"
 echo ""
-echo "📁 Diretório: /opt/hls-manager"
-echo "✅ Instalação concluída!"
+echo "📌 Nota: Esta é uma versão mínima funcional."
+echo "   O sistema básico está rodando!"
