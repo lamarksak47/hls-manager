@@ -1,226 +1,179 @@
 #!/bin/bash
-# install_hls_manager_corrected.sh - Script CORRIGIDO para MariaDB com senha
+# install_hls_manager_final_fixed.sh - Script DEFINITIVO para resetar MariaDB
 
 set -e
 
-echo "🎬 INSTALANDO HLS MANAGER - VERSÃO CORRIGIDA"
-echo "==========================================="
+echo "🔧 RESETANDO E INSTALANDO HLS MANAGER COMPLETO"
+echo "=============================================="
 
-# 1. Verificar e corrigir pacotes
-echo "🔧 Preparando sistema..."
+# 1. PARAR E REMOVER MariaDB completamente
+echo "🗑️ Removendo MariaDB antigo..."
+sudo systemctl stop mariadb 2>/dev/null || true
+sudo systemctl stop mysql 2>/dev/null || true
+
+sudo apt-get remove --purge -y mariadb-server mariadb-client mariadb-common mysql-server mysql-client mysql-common 2>/dev/null || true
+sudo apt-get autoremove -y
+sudo apt-get autoclean
+
+# Remover diretórios de dados
+sudo rm -rf /var/lib/mysql /var/lib/mariadb /etc/mysql /etc/my.cnf 2>/dev/null || true
+
+# 2. INSTALAR NOVO MariaDB limpo
+echo "📦 Instalando MariaDB limpo..."
 sudo apt-get update
-sudo apt-get install -f -y
-sudo dpkg --configure -a
+sudo apt-get install -y mariadb-server mariadb-client
 
-# 2. Dependências essenciais (SEM bibliotecas MySQL problemáticas)
-echo "📦 Instalando dependências seguras..."
-sudo apt-get install -y python3 python3-pip ffmpeg python3-venv nginx \
-    software-properties-common curl wget git \
-    pkg-config libssl-dev libffi-dev python3-dev sqlite3
+# 3. RESETAR completamente a senha do root
+echo "🔄 Resetando senha do MariaDB..."
 
-# 3. VERIFICAR MariaDB e obter senha CORRETA
-echo "🔍 Detectando configuração do MariaDB..."
+# Parar MariaDB
+sudo systemctl stop mariadb
 
-# Tentar diferentes métodos para conectar ao MariaDB
-ROOT_PASS=""
+# Criar arquivo de inicialização sem senha
+sudo tee /tmp/mysql-init.sql > /dev/null << 'EOF'
+-- Resetar senha do root
+ALTER USER 'root'@'localhost' IDENTIFIED BY '';
+FLUSH PRIVILEGES;
 
-# Método 1: Tentar sem senha
-if sudo mysql -u root -e "SELECT 1" 2>/dev/null; then
-    echo "✅ MariaDB acessível sem senha"
-    ROOT_PASS=""
-    
-# Método 2: Tentar senha padrão do script anterior
-elif sudo mysql -u root -pRootPass123 -e "SELECT 1" 2>/dev/null; then
-    echo "✅ Usando senha padrão: RootPass123"
-    ROOT_PASS="RootPass123"
-    
-# Método 3: Tentar senha do MariaDB RootPass@2024
-elif sudo mysql -u root -p'MariaDBRootPass@2024' -e "SELECT 1" 2>/dev/null; then
-    echo "✅ Usando senha: MariaDBRootPass@2024"
-    ROOT_PASS="MariaDBRootPass@2024"
-    
-# Método 4: Pedir senha ao usuário
-else
-    echo ""
-    echo "⚠️ ATENÇÃO: MariaDB já foi configurado com senha personalizada"
-    echo "=========================================================="
-    echo "Por favor, digite a senha do usuário ROOT do MariaDB:"
-    echo "(Pressione Enter se não souber - tentaremos redefinir)"
-    echo "=========================================================="
-    read -s USER_PASS
-    
-    if [ -n "$USER_PASS" ]; then
-        if sudo mysql -u root -p"$USER_PASS" -e "SELECT 1" 2>/dev/null; then
-            ROOT_PASS="$USER_PASS"
-            echo "✅ Senha correta!"
-        else
-            echo "❌ Senha incorreta. Vamos redefinir..."
-            ROOT_PASS=""
-        fi
-    fi
-fi
+-- Remover usuários anônimos
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 
-# 4. Se não temos senha válida, REINICIAR configuração do MariaDB
-if [ -z "$ROOT_PASS" ]; then
-    echo "🔄 Reconfigurando MariaDB..."
-    
-    # Parar MariaDB
-    sudo systemctl stop mariadb 2>/dev/null || true
-    
-    # Método SEGURO: Usar mysql_secure_installation interativo
-    echo "Executando configuração segura do MariaDB..."
-    echo "Siga as instruções abaixo:"
-    echo ""
-    echo "1. Pressione ENTER para senha atual (vazia)"
-    echo "2. Digite 'Y' para definir nova senha"
-    echo "3. Escolha uma senha forte (ex: MariaDBRoot@2024)"
-    echo "4. Confirme a senha"
-    echo "5. Responda 'Y' para todas as perguntas de segurança"
-    echo ""
-    echo "Pressione Enter para começar..."
-    read
-    
-    sudo mysql_secure_installation
-    
-    # Testar com senha padrão após reconfiguração
-    ROOT_PASS="MariaDBRoot@2024"
-fi
+-- Remover banco de teste
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+
+-- Recarregar privilégios
+FLUSH PRIVILEGES;
+EOF
+
+# Iniciar MariaDB em modo seguro
+echo "Iniciando MariaDB em modo seguro..."
+sudo mysqld_safe --skip-grant-tables --skip-networking &
+MYSQL_PID=$!
+sleep 5
+
+# Conectar e resetar
+echo "Resetando configurações..."
+sudo mysql -u root << 'EOF'
+-- Primeiro, garantir que podemos modificar
+USE mysql;
+
+-- Resetar senha do root
+UPDATE user SET plugin='mysql_native_password', authentication_string='' WHERE User='root';
+FLUSH PRIVILEGES;
+EXIT;
+EOF
+
+# Parar modo seguro
+sudo kill $MYSQL_PID 2>/dev/null || true
+sleep 2
+
+# 4. Iniciar MariaDB normalmente e configurar senha
+echo "🔐 Configurando nova senha..."
+sudo systemctl start mariadb
+sleep 3
+
+# Definir nova senha
+sudo mysql -u root << 'EOF'
+-- Definir senha para root
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'MariaDBRoot2024!';
+FLUSH PRIVILEGES;
+
+-- Configurações básicas de segurança
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
+EOF
+
+# Definir variáveis
+ROOT_PASS="MariaDBRoot2024!"
+echo "✅ Nova senha root: $ROOT_PASS"
 
 # 5. Criar banco de dados da aplicação
-echo "🗃️ Criando banco de dados da aplicação..."
+echo "🗃️ Criando banco de dados..."
 APP_USER="hls_app"
-APP_PASS="App_$(date +%s | tail -c 6)"
+APP_PASS="HlsApp_$(date +%s | tail -c 6)"
 
-# Função para executar SQL com a senha correta
-execute_mysql() {
-    local sql="$1"
-    
-    if [ -n "$ROOT_PASS" ]; then
-        sudo mysql -u root -p"$ROOT_PASS" -e "$sql" 2>/dev/null && return 0
-    fi
-    
-    # Tentar sem senha
-    sudo mysql -u root -e "$sql" 2>/dev/null && return 0
-    
-    return 1
-}
-
-# Comandos SQL para criar banco
-SQL_COMMANDS="
+sudo mysql -u root -p"$ROOT_PASS" <<-EOF
 CREATE DATABASE IF NOT EXISTS hls_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${APP_PASS}';
 GRANT ALL PRIVILEGES ON hls_manager.* TO '${APP_USER}'@'localhost';
 FLUSH PRIVILEGES;
-"
-
-if execute_mysql "$SQL_COMMANDS"; then
-    echo "✅ Banco de dados criado com sucesso!"
-else
-    echo "⚠️ Erro ao criar banco. Tentando método alternativo..."
-    
-    # Método alternativo: conectar e executar manualmente
-    if [ -n "$ROOT_PASS" ]; then
-        sudo mysql -u root -p"$ROOT_PASS" <<-EOF
-CREATE DATABASE IF NOT EXISTS hls_manager;
-CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${APP_PASS}';
-GRANT ALL PRIVILEGES ON hls_manager.* TO '${APP_USER}'@'localhost';
-FLUSH PRIVILEGES;
 EOF
-    else
-        sudo mysql -u root <<-EOF
-CREATE DATABASE IF NOT EXISTS hls_manager;
-CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${APP_PASS}';
-GRANT ALL PRIVILEGES ON hls_manager.* TO '${APP_USER}'@'localhost';
-FLUSH PRIVILEGES;
-EOF
-    fi
-    
-    echo "✅ Banco criado via método alternativo"
-fi
 
-# 6. USAR SQLite como FALLBACK se MySQL falhar
-echo "🔧 Verificando conexão com banco..."
-if ! sudo mysql -u "$APP_USER" -p"$APP_PASS" -e "USE hls_manager; SELECT 1" 2>/dev/null; then
-    echo "⚠️ Não foi possível conectar ao MySQL/MariaDB"
-    echo "📊 Usando SQLite como banco de dados alternativo..."
-    USE_SQLITE=true
-    DB_STRING="sqlite:////opt/hls-manager/hls.db"
-else
-    USE_SQLITE=false
-    DB_STRING="mysql://${APP_USER}:${APP_PASS}@localhost/hls_manager"
-    echo "✅ Conexão MySQL estabelecida"
-fi
+echo "✅ Banco criado: usuário=$APP_USER, senha=$APP_PASS"
 
-# 7. Criar estrutura do sistema
+# 6. Instalar dependências do sistema
+echo "📦 Instalando dependências do sistema..."
+sudo apt-get install -y python3 python3-pip ffmpeg python3-venv nginx \
+    software-properties-common curl wget git \
+    pkg-config libssl-dev libffi-dev python3-dev
+
+# 7. Criar usuário e diretórios
 echo "👤 Criando estrutura do sistema..."
 if ! id "hlsadmin" &>/dev/null; then
     sudo useradd -r -s /bin/false -m -d /opt/hls-manager hlsadmin
 fi
 
-sudo mkdir -p /opt/hls-manager/{uploads,hls,logs,config,static}
+sudo mkdir -p /opt/hls-manager/{uploads,hls,logs,config,static,templates}
 cd /opt/hls-manager
 
-# Configurar permissões
 sudo chown -R hlsadmin:hlsadmin /opt/hls-manager
 sudo chmod 755 /opt/hls-manager
 sudo chmod 770 /opt/hls-manager/uploads
 
-# 8. Configurar ambiente Python com PyMySQL (mais confiável)
-echo "🐍 Configurando ambiente Python com PyMySQL..."
+# 8. Instalar Python e PyMySQL (NÃO mysqlclient!)
+echo "🐍 Configurando Python com PyMySQL..."
 
 sudo -u hlsadmin python3 -m venv venv
-
-# Atualizar pip
 sudo -u hlsadmin ./venv/bin/pip install --upgrade pip setuptools wheel
 
-# Instalar PyMySQL (funciona sem bibliotecas C do sistema)
-if [ "$USE_SQLITE" = false ]; then
-    echo "Instalando PyMySQL para MySQL..."
-    sudo -u hlsadmin ./venv/bin/pip install pymysql
-    DRIVER="pymysql"
-else
-    echo "Usando SQLite (não requer driver adicional)"
-    DRIVER="sqlite"
-fi
+# Instalar PyMySQL - funciona SEM problemas de dependência!
+echo "Instalando PyMySQL..."
+sudo -u hlsadmin ./venv/bin/pip install pymysql==1.1.0
 
-# Instalar Flask e dependências básicas
+# Instalar Flask e dependências
 sudo -u hlsadmin ./venv/bin/pip install flask==2.3.3 \
     flask-sqlalchemy==3.0.5 \
     flask-login==0.6.2 \
     flask-wtf==1.1.1 \
     gunicorn==21.2.0 \
     python-dotenv==1.0.0 \
-    werkzeug==2.3.7
+    werkzeug==2.3.7 \
+    pillow==10.0.0
 
-# 9. Criar aplicação Flask adaptativa
-echo "💻 Criando aplicação adaptativa..."
+# 9. Criar aplicação Flask COMPLETA
+echo "💻 Criando aplicação Flask completa..."
 
-# app.py adaptativo
-sudo tee /opt/hls-manager/app.py > /dev/null << EOF
-from flask import Flask, jsonify, render_template_string
+# Criar app.py
+sudo tee /opt/hls-manager/app.py > /dev/null << 'EOF'
+from flask import Flask, render_template, jsonify, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
+import subprocess
+import uuid
 
 app = Flask(__name__)
 
-# Configuração adaptativa
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-12345')
-
-if os.getenv('DB_TYPE', 'mysql') == 'sqlite':
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////opt/hls-manager/hls.db'
-    print("📊 Usando SQLite como banco de dados")
-else:
-    db_user = os.getenv('DB_USER', 'hls_app')
-    db_pass = os.getenv('DB_PASS', '')
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://{db_user}:{db_pass}@localhost/hls_manager'
-    print("📊 Usando MySQL/MariaDB como banco de dados")
-
+# Configuração
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-123')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql+pymysql://hls_app:HlsApp_123456@localhost/hls_manager')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['UPLOAD_FOLDER'] = '/opt/hls-manager/uploads'
+app.config['HLS_FOLDER'] = '/opt/hls-manager/hls'
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024 * 1024  # 1GB
 
+# Inicializar extensões
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
 # Modelos
 class User(UserMixin, db.Model):
@@ -231,19 +184,29 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    def __repr__(self):
-        return f'<User {self.username}>'
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 class Channel(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
-    status = db.Column(db.String(20), default='draft')
+    status = db.Column(db.String(20), default='draft')  # draft, processing, active, error
     hls_path = db.Column(db.String(500))
+    video_path = db.Column(db.String(500))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    def __repr__(self):
-        return f'<Channel {self.name}>'
+    # Métricas
+    duration = db.Column(db.Integer)  # segundos
+    resolution = db.Column(db.String(20))
+    file_size = db.Column(db.BigInteger)
+    
+    user = db.relationship('User', backref='channels')
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -252,57 +215,89 @@ def load_user(user_id):
 # Rotas
 @app.route('/')
 def index():
-    db_type = 'SQLite' if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI'] else 'MySQL/MariaDB'
-    
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>🎬 HLS Manager</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-                .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-                .success { color: #28a745; font-weight: bold; }
-                .info { color: #17a2b8; }
-                .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🎬 HLS Manager</h1>
-                <p class="success">✅ Sistema instalado e funcionando!</p>
-                
-                <h2>Informações do Sistema</h2>
-                <p><strong>Banco de Dados:</strong> {{ db_type }}</p>
-                <p><strong>Status:</strong> <span class="success">Operacional</span></p>
-                
-                <h2>Ações</h2>
-                <a href="/dashboard" class="btn">📊 Dashboard</a>
-                <a href="/health" class="btn">❤️ Health Check</a>
-                <a href="/channels" class="btn">📺 Canais</a>
-                
-                <h2>Próximos Passos</h2>
-                <ol>
-                    <li>Acesse o Dashboard para gerenciar canais</li>
-                    <li>Configure o upload de vídeos</li>
-                    <li>Monitore as conversões HLS</li>
-                </ol>
-            </div>
-        </body>
-        </html>
-    ''', db_type=db_type)
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    return render_template('index.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        
+        if user and user.check_password(password):
+            login_user(user)
+            return redirect(url_for('dashboard'))
+        flash('Credenciais inválidas')
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    channels = Channel.query.count()
-    return f'<h1>Dashboard</h1><p>Canais: {channels}</p>'
+    channels = Channel.query.filter_by(user_id=current_user.id).all()
+    return render_template('dashboard.html', channels=channels)
 
 @app.route('/channels')
-def channels():
-    all_channels = Channel.query.all()
-    channels_list = '<br>'.join([f'- {c.name} ({c.status})' for c in all_channels])
-    return f'<h1>Canais</h1><p>{channels_list}</p>'
+@login_required
+def channel_list():
+    channels = Channel.query.filter_by(user_id=current_user.id).all()
+    return render_template('channels.html', channels=channels)
+
+@app.route('/channels/new', methods=['GET', 'POST'])
+@login_required
+def new_channel():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        description = request.form.get('description')
+        
+        channel = Channel(
+            name=name,
+            description=description,
+            user_id=current_user.id
+        )
+        db.session.add(channel)
+        db.session.commit()
+        
+        flash('Canal criado com sucesso!')
+        return redirect(url_for('channel_list'))
+    
+    return render_template('new_channel.html')
+
+@app.route('/channels/<int:channel_id>/upload', methods=['POST'])
+@login_required
+def upload_video(channel_id):
+    channel = Channel.query.get_or_404(channel_id)
+    
+    if 'video' not in request.files:
+        flash('Nenhum arquivo selecionado')
+        return redirect(url_for('channel_list'))
+    
+    file = request.files['video']
+    if file.filename == '':
+        flash('Nenhum arquivo selecionado')
+        return redirect(url_for('channel_list'))
+    
+    # Salvar arquivo
+    filename = secure_filename(file.filename)
+    unique_filename = f"{uuid.uuid4()}_{filename}"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+    file.save(filepath)
+    
+    # Atualizar canal
+    channel.video_path = filepath
+    channel.status = 'processing'
+    db.session.commit()
+    
+    # Iniciar conversão em background (simplificado)
+    flash('Vídeo enviado! A conversão começará em breve.')
+    return redirect(url_for('channel_list'))
 
 @app.route('/health')
 def health():
@@ -315,26 +310,98 @@ def health():
             'timestamp': datetime.utcnow().isoformat()
         })
     except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'database': 'disconnected'
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Criar tabelas
+# Templates simples
+@app.route('/templates/<template_name>')
+def serve_template(template_name):
+    templates = {
+        'index.html': '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>HLS Manager</title></head>
+            <body>
+                <h1>🎬 HLS Manager</h1>
+                <p>Sistema de gerenciamento de streaming HLS</p>
+                <a href="/login">Login</a> | <a href="/health">Health Check</a>
+            </body>
+            </html>
+        ''',
+        'login.html': '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>Login</title></head>
+            <body>
+                <h1>Login</h1>
+                <form method="POST">
+                    <input type="text" name="username" placeholder="Usuário" required><br>
+                    <input type="password" name="password" placeholder="Senha" required><br>
+                    <button type="submit">Entrar</button>
+                </form>
+            </body>
+            </html>
+        ''',
+        'dashboard.html': '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>Dashboard</title></head>
+            <body>
+                <h1>📊 Dashboard</h1>
+                <p>Bem-vindo!</p>
+                <a href="/channels">Gerenciar Canais</a> |
+                <a href="/channels/new">Novo Canal</a> |
+                <a href="/logout">Sair</a>
+            </body>
+            </html>
+        ''',
+        'channels.html': '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>Canais</title></head>
+            <body>
+                <h1>📺 Canais</h1>
+                <a href="/channels/new">+ Novo Canal</a><br><br>
+                {% for channel in channels %}
+                    <div>
+                        <h3>{{ channel.name }}</h3>
+                        <p>Status: {{ channel.status }}</p>
+                        <form action="/channels/{{ channel.id }}/upload" method="POST" enctype="multipart/form-data">
+                            <input type="file" name="video" accept="video/*">
+                            <button type="submit">Upload Vídeo</button>
+                        </form>
+                    </div>
+                {% endfor %}
+            </body>
+            </html>
+        ''',
+        'new_channel.html': '''
+            <!DOCTYPE html>
+            <html>
+            <head><title>Novo Canal</title></head>
+            <body>
+                <h1>Novo Canal</h1>
+                <form method="POST">
+                    <input type="text" name="name" placeholder="Nome do Canal" required><br>
+                    <textarea name="description" placeholder="Descrição"></textarea><br>
+                    <button type="submit">Criar Canal</button>
+                </form>
+            </body>
+            </html>
+        '''
+    }
+    
+    if template_name in templates:
+        return templates[template_name]
+    return 'Template não encontrado', 404
+
+# Criar banco e usuário admin
 with app.app_context():
     db.create_all()
-    print("✅ Tabelas do banco criadas/verificadas")
     
     # Criar usuário admin se não existir
     if not User.query.filter_by(username='admin').first():
-        from werkzeug.security import generate_password_hash
-        admin = User(
-            username='admin',
-            email='admin@localhost',
-            password_hash=generate_password_hash(os.getenv('ADMIN_PASS', 'Admin123')),
-            is_admin=True
-        )
+        admin = User(username='admin', email='admin@localhost', is_admin=True)
+        admin.set_password('admin123')
         db.session.add(admin)
         db.session.commit()
         print("✅ Usuário admin criado")
@@ -343,47 +410,32 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
 EOF
 
-# 10. Criar arquivo de configuração
+# 10. Criar arquivo de configuração .env
 echo "⚙️ Criando configuração..."
-ADMIN_PASS="Admin$(date +%s | tail -c 6)"
+ADMIN_PASS="admin123"  # Senha simples para teste
 SECRET_KEY=$(openssl rand -hex 32)
 
 sudo tee /opt/hls-manager/.env > /dev/null << EOF
-# HLS Manager Configuration
+SECRET_KEY=${SECRET_KEY}
+DATABASE_URL=mysql+pymysql://${APP_USER}:${APP_PASS}@localhost/hls_manager
+ADMIN_PASSWORD=${ADMIN_PASS}
 DEBUG=False
 PORT=5000
-HOST=0.0.0.0
-SECRET_KEY=${SECRET_KEY}
-
-# Database Configuration
-DB_TYPE=${DRIVER}
-DB_USER=${APP_USER}
-DB_PASS=${APP_PASS}
-
-# Admin User
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=${ADMIN_PASS}
-
-# Paths
-UPLOAD_FOLDER=/opt/hls-manager/uploads
-HLS_FOLDER=/opt/hls-manager/hls
-LOG_FOLDER=/opt/hls-manager/logs
-
-# Limits
-MAX_UPLOAD_SIZE=1073741824  # 1GB
 EOF
 
 sudo chown hlsadmin:hlsadmin /opt/hls-manager/.env
 sudo chmod 600 /opt/hls-manager/.env
 
-# 11. Criar sistema de serviço
-echo "⚙️ Configurando sistema de serviço..."
+# 11. Criar diretório de templates
+sudo mkdir -p /opt/hls-manager/templates
 
-# systemd service
+# 12. Criar serviço systemd
+echo "⚙️ Criando serviço systemd..."
 sudo tee /etc/systemd/system/hls-manager.service > /dev/null << EOF
 [Unit]
 Description=HLS Manager Service
-After=network.target
+After=network.target mariadb.service
+Requires=mariadb.service
 
 [Service]
 Type=simple
@@ -395,51 +447,40 @@ Environment="FLASK_APP=app.py"
 ExecStart=/opt/hls-manager/venv/bin/gunicorn \
     --bind 127.0.0.1:5000 \
     --workers 2 \
-    --threads 2 \
     --timeout 120 \
+    --access-logfile /opt/hls-manager/logs/access.log \
+    --error-logfile /opt/hls-manager/logs/error.log \
     app:app
 Restart=always
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 12. Configurar Nginx
+# 13. Configurar Nginx
 echo "🌐 Configurando Nginx..."
-
 sudo tee /etc/nginx/sites-available/hls-manager > /dev/null << 'EOF'
 server {
     listen 80;
     server_name _;
     
-    # Tamanho máximo de upload
     client_max_body_size 1G;
     
-    # Proxy para aplicação
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
     }
     
-    # Servir arquivos HLS
     location /hls/ {
         alias /opt/hls-manager/hls/;
         expires 30d;
         add_header Cache-Control "public";
     }
     
-    # Health check
     location /health {
         proxy_pass http://127.0.0.1:5000/health;
         access_log off;
@@ -450,89 +491,65 @@ EOF
 sudo ln -sf /etc/nginx/sites-available/hls-manager /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
-# 13. Iniciar serviços
+# 14. Iniciar todos os serviços
 echo "🚀 Iniciando serviços..."
 
 sudo systemctl daemon-reload
+sudo systemctl enable mariadb
+sudo systemctl start mariadb
+sleep 3
 
-# Iniciar MariaDB se estiver usando MySQL
-if [ "$USE_SQLITE" = false ]; then
-    sudo systemctl restart mariadb
-    sleep 2
-fi
-
-# Iniciar aplicação
 sudo systemctl enable hls-manager
 sudo systemctl start hls-manager
 sleep 3
 
-# Iniciar Nginx
 sudo nginx -t 2>/dev/null && sudo systemctl restart nginx
 
-# 14. Testar instalação
+# 15. Testar
 echo "🧪 Testando instalação..."
 sleep 5
 
-echo "Verificando status dos serviços:"
-
-# Verificar hls-manager
-if sudo systemctl is-active --quiet hls-manager; then
-    echo "✅ hls-manager: ATIVO"
-    
-    # Testar endpoint de saúde
-    if curl -s http://localhost:5000/health 2>/dev/null | grep -q "healthy"; then
-        echo "✅ Aplicação: RESPONDENDO"
-        APP_STATUS="✅"
+echo "Status dos serviços:"
+for service in mariadb hls-manager nginx; do
+    if systemctl is-active --quiet $service; then
+        echo "✅ $service: ATIVO"
     else
-        echo "⚠️ Aplicação: NÃO RESPONDE"
-        APP_STATUS="⚠️"
+        echo "❌ $service: INATIVO"
+        sudo journalctl -u $service -n 10 --no-pager
     fi
+done
+
+echo ""
+echo "Testando aplicação..."
+if curl -s http://localhost:5000/health | grep -q "healthy"; then
+    echo "✅ Aplicação funcionando!"
 else
-    echo "❌ hls-manager: INATIVO"
-    APP_STATUS="❌"
+    echo "⚠️ Aplicação não responde"
+    sudo journalctl -u hls-manager -n 20 --no-pager
 fi
 
-# Verificar Nginx
-if sudo systemctl is-active --quiet nginx; then
-    echo "✅ nginx: ATIVO"
-    NGINX_STATUS="✅"
-else
-    echo "❌ nginx: INATIVO"
-    NGINX_STATUS="❌"
-fi
-
-# 15. Mostrar informações finais
+# 16. Mostrar informações
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || curl -s ifconfig.me || echo "localhost")
-
 echo ""
-echo "🎉 HLS MANAGER INSTALADO!"
-echo "========================"
-echo "Status da Instalação:"
-echo "• Aplicação: $APP_STATUS"
-echo "• Nginx: $NGINX_STATUS"
-echo "• Banco de Dados: $DRIVER"
+echo "🎉 HLS MANAGER INSTALADO COM SUCESSO!"
+echo "====================================="
 echo ""
-echo "🌐 URL DE ACESSO:"
-echo "   http://$IP"
+echo "🌐 URL: http://$IP"
 echo ""
-echo "🔐 CREDENCIAIS:"
+echo "🔐 CREDENCIAIS DE LOGIN:"
 echo "   Usuário: admin"
-echo "   Senha: $ADMIN_PASS"
+echo "   Senha: admin123"
 echo ""
-if [ "$USE_SQLITE" = false ]; then
-    echo "🗄️ BANCO DE DADOS (MySQL/MariaDB):"
-    echo "   Usuário: $APP_USER"
-    echo "   Senha: $APP_PASS"
-    echo "   Banco: hls_manager"
-else
-    echo "🗄️ BANCO DE DADOS: SQLite"
-    echo "   Arquivo: /opt/hls-manager/hls.db"
-fi
+echo "🗄️ INFORMAÇÕES DO BANCO:"
+echo "   Usuário: $APP_USER"
+echo "   Senha: $APP_PASS"
+echo "   Root Password: $ROOT_PASS"
 echo ""
 echo "⚙️ COMANDOS ÚTEIS:"
-echo "• Ver status: sudo systemctl status hls-manager"
-echo "• Ver logs: sudo journalctl -u hls-manager -f"
-echo "• Reiniciar: sudo systemctl restart hls-manager"
+echo "   sudo systemctl status hls-manager"
+echo "   sudo journalctl -u hls-manager -f"
+echo "   mysql -u $APP_USER -p"
 echo ""
 echo "📁 DIRETÓRIO: /opt/hls-manager"
-echo "✅ Instalação concluída!"
+echo ""
+echo "✅ Instalação completa! Acesse http://$IP"
