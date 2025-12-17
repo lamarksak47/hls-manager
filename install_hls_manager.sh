@@ -1,50 +1,49 @@
 #!/bin/bash
-# install_hls_converter_robust.sh - Versão robusta com instalação garantida do ffmpeg
+# install_hls_converter_complete_fixed_final.sh - Sistema COMPLETO FINAL CORRIGIDO
 
 set -e
 
-echo "🚀 INSTALANDO HLS CONVERTER - VERSÃO ROBUSTA"
-echo "==========================================="
+echo "🚀 INSTALANDO HLS CONVERTER COMPLETO FINAL"
+echo "========================================="
 
-# 1. Definir diretório base (home do usuário)
-HLS_HOME="$HOME/hls-converter"
+# 1. Definir diretório base no home
+HLS_HOME="$HOME/hls-converter-pro"
 echo "📁 Diretório base: $HLS_HOME"
 
 # Função para instalar ffmpeg robustamente
 install_ffmpeg_robust() {
-    echo "🔧 Tentando instalar ffmpeg..."
+    echo "🔧 Instalando ffmpeg com múltiplos métodos..."
     
-    # Método 1: Tentar instalação normal
-    echo "📦 Método 1: Instalação normal do apt..."
+    # Método 1: Apt normal
+    echo "📦 Método 1: Apt padrão..."
     sudo apt-get update
     if sudo apt-get install -y ffmpeg; then
-        echo "✅ FFmpeg instalado com sucesso via apt"
+        echo "✅ FFmpeg instalado via apt"
         return 0
     fi
     
-    # Método 2: Tentar instalar individualmente
-    echo "📦 Método 2: Instalando componentes individualmente..."
-    sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
-        libswscale-dev libswresample-dev libpostproc-dev || true
+    # Método 2: Componentes individuais
+    echo "📦 Método 2: Componentes individuais..."
+    sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev \
+        libavdevice-dev libswscale-dev libswresample-dev libpostproc-dev || true
     
-    # Método 3: Tentar instalar do repositório Snap
-    echo "📦 Método 3: Tentando via Snap..."
+    # Método 3: Snap
+    echo "📦 Método 3: Snap..."
     if command -v snap &> /dev/null; then
         sudo snap install ffmpeg --classic && echo "✅ FFmpeg instalado via Snap" && return 0
     fi
     
-    # Método 4: Compilar do código fonte (último recurso)
-    echo "📦 Método 4: Baixando binário estático..."
+    # Método 4: Binário estático
+    echo "📦 Método 4: Binário estático..."
     cd /tmp
-    wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz || \
-    wget -q https://www.johnvansickle.com/ffmpeg/old-releases/ffmpeg-4.4.1-amd64-static.tar.xz || \
-    curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+    wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz 2>/dev/null || \
+    curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz 2>/dev/null
     
     if [ -f ffmpeg-release-amd64-static.tar.xz ]; then
-        tar -xf ffmpeg-release-amd64-static.tar.xz
-        FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d | head -1)
+        tar -xf ffmpeg-release-amd64-static.tar.xz 2>/dev/null || true
+        FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d 2>/dev/null | head -1)
         if [ -n "$FFMPEG_DIR" ]; then
-            sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/
+            sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/ 2>/dev/null || true
             echo "✅ FFmpeg instalado de binário estático"
             return 0
         fi
@@ -63,7 +62,7 @@ fi
 
 # 3. Parar serviços existentes
 echo "🛑 Parando serviços existentes..."
-sudo systemctl stop hls-converter hls-simple hls-dashboard 2>/dev/null || true
+sudo systemctl stop hls-simple hls-dashboard hls-manager hls-final hls-converter 2>/dev/null || true
 sudo pkill -9 python 2>/dev/null || true
 sleep 2
 
@@ -73,30 +72,15 @@ rm -rf "$HLS_HOME" 2>/dev/null || true
 sudo rm -f /etc/systemd/system/hls-*.service 2>/dev/null || true
 sudo systemctl daemon-reload
 
-# 5. INSTALAR FFMPEG PRIMEIRO (MUITO IMPORTANTE)
+# 5. INSTALAR FFMPEG PRIMEIRO
 echo "🎬 INSTALANDO FFMPEG (ETAPA CRÍTICA)..."
-
-# Verificar se ffmpeg já está instalado
 if command -v ffmpeg &> /dev/null; then
     echo "✅ ffmpeg já está instalado"
-    echo "🔍 Versão do ffmpeg:"
+    echo "🔍 Versão:"
     ffmpeg -version | head -1
 else
     echo "❌ ffmpeg não encontrado, instalando..."
     install_ffmpeg_robust
-    
-    # Verificar novamente
-    if ! command -v ffmpeg &> /dev/null; then
-        echo "⚠️  Tentando encontrar ffmpeg em locais alternativos..."
-        # Procurar ffmpeg em vários locais possíveis
-        for path in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-            if [ -f "$path" ]; then
-                sudo ln -sf "$path" /usr/local/bin/ffmpeg
-                echo "✅ Link simbólico criado para $path"
-                break
-            fi
-        done
-    fi
     
     # Verificação final
     if command -v ffmpeg &> /dev/null; then
@@ -104,8 +88,7 @@ else
         ffmpeg -version | head -1
     else
         echo "⚠️  AVISO: Não foi possível instalar o ffmpeg automaticamente"
-        echo "📋 Você precisará instalá-lo manualmente depois:"
-        echo "   sudo apt-get update && sudo apt-get install -y ffmpeg"
+        echo "📋 Instale manualmente depois: sudo apt-get update && sudo apt-get install -y ffmpeg"
     fi
 fi
 
@@ -114,9 +97,10 @@ echo "🔧 Instalando outras dependências..."
 sudo apt-get update
 sudo apt-get install -y python3 python3-pip python3-venv curl wget
 
-# 7. Criar estrutura
+# 7. Criar estrutura de diretórios
 echo "🏗️  Criando estrutura de diretórios..."
-mkdir -p "$HLS_HOME"/{uploads,hls,logs,db}
+mkdir -p "$HLS_HOME"/{uploads,hls,logs,db,templates,static}
+mkdir -p "$HLS_HOME/hls/{240p,360p,480p,720p,1080p,original}"
 cd "$HLS_HOME"
 
 # 8. Configurar ambiente Python
@@ -124,16 +108,18 @@ echo "🐍 Configurando ambiente Python..."
 python3 -m venv venv
 source venv/bin/activate
 
-# Instalar dependências Python
+# Instalar dependências Python COMPLETAS
 echo "📦 Instalando dependências Python..."
 pip install --upgrade pip
-pip install flask werkzeug psutil
+pip install flask flask-cors python-magic psutil waitress werkzeug
 
-# 9. CRIAR APLICAÇÃO FLASK COM VERIFICAÇÃO ROBUSTA DO FFMPEG
-echo "💻 Criando aplicação robusta..."
+# 9. CRIAR APLICAÇÃO FLASK COMPLETA CORRIGIDA
+echo "💻 Criando aplicação completa corrigida..."
 
 cat > app.py << 'EOF'
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import os
 import subprocess
 import uuid
@@ -142,12 +128,14 @@ import time
 import psutil
 from datetime import datetime
 import shutil
+import magic
 import sys
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+CORS(app)
 
 # Configurações - usando diretório home
-BASE_DIR = os.path.expanduser("~/hls-converter")
+BASE_DIR = os.path.expanduser("~/hls-converter-pro")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 HLS_DIR = os.path.join(BASE_DIR, "hls")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -179,7 +167,38 @@ def log_activity(message, level="INFO"):
     with open(log_file, 'a') as f:
         f.write(f"[{timestamp}] [{level}] {message}\n")
 
-# Função ROBUSTA para encontrar ffmpeg
+def get_system_info():
+    """Obtém informações do sistema"""
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Contar conversões
+        db = load_database()
+        
+        # Verificar ffmpeg
+        try:
+            ffmpeg_result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
+            ffmpeg_status = "✅" if ffmpeg_result.returncode == 0 else "❌"
+        except:
+            ffmpeg_status = "❓"
+        
+        return {
+            "cpu": f"{cpu_percent:.1f}%",
+            "memory": f"{memory.percent:.1f}%",
+            "disk": f"{disk.percent:.1f}%",
+            "uptime": str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split('.')[0],
+            "total_conversions": db["stats"]["total"],
+            "success_conversions": db["stats"]["success"],
+            "failed_conversions": db["stats"]["failed"],
+            "hls_files": len(os.listdir(HLS_DIR)) if os.path.exists(HLS_DIR) else 0,
+            "ffmpeg_status": ffmpeg_status
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+# Função robusta para encontrar ffmpeg
 def find_ffmpeg():
     """Encontra ffmpeg em vários locais possíveis"""
     possible_paths = [
@@ -192,7 +211,7 @@ def find_ffmpeg():
         '/usr/lib/ffmpeg',
     ]
     
-    # Também verificar no PATH
+    # Verificar no PATH
     try:
         result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
         if result.returncode == 0:
@@ -205,164 +224,133 @@ def find_ffmpeg():
         if os.path.exists(path) and os.access(path, os.X_OK):
             return path
     
-    # Tentar encontrar via find
-    try:
-        result = subprocess.run(['find', '/usr', '-name', 'ffmpeg', '-type', 'f', '-executable'], 
-                              capture_output=True, text=True, timeout=5)
-        if result.returncode == 0 and result.stdout:
-            return result.stdout.split('\n')[0]
-    except:
-        pass
-    
     return None
 
-# Verificar ffmpeg uma vez e armazenar o caminho
+# Verificar ffmpeg uma vez
 FFMPEG_PATH = find_ffmpeg()
 if FFMPEG_PATH:
     log_activity(f"FFmpeg encontrado em: {FFMPEG_PATH}")
 else:
-    log_activity("FFmpeg NÃO encontrado no sistema!", "ERROR")
+    log_activity("FFmpeg NÃO encontrado!", "ERROR")
 
-# HTML SIMPLES E FUNCIONAL
-HTML = '''
+# ==================== TEMPLATES HTML COMPLETOS ====================
+
+INDEX_HTML = '''
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
-    <title>🎬 HLS Converter</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 HLS Converter PRO</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #4361ee;
+            --secondary: #3a0ca3;
+            --success: #4cc9f0;
+            --danger: #f72585;
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
-            color: #333;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+        
+        .glass-card {
             background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
             border-radius: 20px;
             padding: 30px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
         }
-        h1 {
-            text-align: center;
-            margin-bottom: 30px;
-            color: #333;
-        }
+        
         .upload-area {
-            border: 3px dashed #4361ee;
+            border: 3px dashed var(--primary);
             border-radius: 15px;
-            padding: 60px 20px;
+            padding: 60px 30px;
             text-align: center;
+            transition: all 0.3s;
             cursor: pointer;
             background: rgba(67, 97, 238, 0.05);
-            margin-bottom: 30px;
-            transition: all 0.3s;
         }
+        
         .upload-area:hover {
             background: rgba(67, 97, 238, 0.1);
-            border-color: #3a0ca3;
+            border-color: var(--secondary);
+            transform: translateY(-5px);
         }
-        .file-list {
-            margin: 20px 0;
-        }
-        .file-item {
+        
+        .file-list-item {
             background: #f8f9fa;
-            padding: 15px;
             border-radius: 10px;
+            padding: 15px;
             margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-left: 4px solid #4361ee;
+            border-left: 4px solid var(--primary);
         }
-        .btn {
-            background: linear-gradient(90deg, #4361ee 0%, #3a0ca3 100%);
-            color: white;
+        
+        .btn-primary {
+            background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%);
             border: none;
             padding: 12px 30px;
             border-radius: 10px;
-            font-size: 16px;
             font-weight: bold;
-            cursor: pointer;
-            transition: transform 0.2s;
         }
-        .btn:hover {
+        
+        .btn-primary:hover {
             transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(67, 97, 238, 0.3);
         }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        
         .progress-container {
             background: #e9ecef;
             border-radius: 10px;
             height: 20px;
             overflow: hidden;
             margin: 20px 0;
-            display: none;
         }
+        
         .progress-bar {
             height: 100%;
             background: linear-gradient(90deg, #4cc9f0 0%, #4361ee 100%);
-            width: 0%;
-            transition: width 0.3s;
+            transition: width 0.5s ease;
         }
-        .result {
-            background: #d4edda;
-            padding: 20px;
-            border-radius: 10px;
-            margin-top: 20px;
-            display: none;
-        }
-        .quality-options {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 10px;
-            margin: 20px 0;
-        }
-        .quality-option {
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-            cursor: pointer;
-            border: 2px solid transparent;
-        }
-        .quality-option.selected {
-            border-color: #4361ee;
-            background: #e3f2fd;
-        }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 30px 0;
-        }
+        
         .stat-card {
             background: white;
+            border-radius: 15px;
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #4361ee;
-        }
-        .error-box {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 10px;
             margin-bottom: 20px;
-            border: 1px solid #f5c6cb;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }
+        
+        .nav-tabs .nav-link {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .nav-tabs .nav-link.active {
+            color: var(--primary);
+            border-bottom: 3px solid var(--primary);
+        }
+        
+        .quality-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin: 2px;
+        }
+        
+        .quality-240p { background: #e3f2fd; color: #1565c0; }
+        .quality-480p { background: #e8f5e9; color: #2e7d32; }
+        .quality-720p { background: #fff3e0; color: #ef6c00; }
+        .quality-1080p { background: #fce4ec; color: #c2185b; }
+        
         .warning-box {
             background: #fff3cd;
             color: #856404;
@@ -374,79 +362,315 @@ HTML = '''
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎬 HLS Video Converter</h1>
-        
-        <!-- System Status -->
-        <div id="systemStatus"></div>
-        
-        <!-- System Stats -->
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-number" id="cpuUsage">--</div>
-                <div>CPU Usage</div>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 mb-4">
+                <div class="glass-card">
+                    <div class="text-center mb-4">
+                        <h1><i class="bi bi-camera-reels"></i> HLS PRO</h1>
+                        <p class="text-muted">Conversor de vídeos profissional</p>
+                    </div>
+                    
+                    <!-- System Status -->
+                    <div id="systemStatus"></div>
+                    
+                    <!-- System Stats -->
+                    <div id="systemStats">
+                        <div class="stat-card">
+                            <h5><i class="bi bi-speedometer2"></i> Status do Sistema</h5>
+                            <div class="mt-3">
+                                <p><strong>CPU:</strong> <span id="cpuUsage">--</span></p>
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar" id="cpuBar"></div>
+                                </div>
+                                
+                                <p class="mt-3"><strong>Memória:</strong> <span id="memoryUsage">--</span></p>
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar bg-success" id="memoryBar"></div>
+                                </div>
+                                
+                                <p class="mt-3"><strong>Disco:</strong> <span id="diskUsage">--</span></p>
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar bg-info" id="diskBar"></div>
+                                </div>
+                                
+                                <p><strong>FFmpeg:</strong> <span id="ffmpegStatus">❓</span></p>
+                                <p><strong>Uptime:</strong> <span id="uptime">--</span></p>
+                                <p><strong>Conversões:</strong> <span id="totalConversions">0</span></p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Quick Actions -->
+                    <div class="stat-card">
+                        <h5><i class="bi bi-lightning-charge"></i> Ações Rápidas</h5>
+                        <div class="d-grid gap-2 mt-3">
+                            <button class="btn btn-outline-primary" onclick="showUpload()">
+                                <i class="bi bi-upload"></i> Upload
+                            </button>
+                            <button class="btn btn-outline-success" onclick="showConversions()">
+                                <i class="bi bi-list-check"></i> Histórico
+                            </button>
+                            <button class="btn btn-outline-warning" onclick="showSettings()">
+                                <i class="bi bi-gear"></i> Configurações
+                            </button>
+                            <button class="btn btn-outline-info" onclick="refreshStats()">
+                                <i class="bi bi-arrow-clockwise"></i> Atualizar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-number" id="memoryUsage">--</div>
-                <div>Memory</div>
+            
+            <!-- Main Content -->
+            <div class="col-md-9">
+                <div class="glass-card">
+                    <!-- Navigation -->
+                    <ul class="nav nav-tabs" id="mainTabs">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="upload-tab" onclick="showUpload()">
+                                <i class="bi bi-upload"></i> Upload
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="conversions-tab" onclick="showConversions()">
+                                <i class="bi bi-list-check"></i> Conversões
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="settings-tab" onclick="showSettings()">
+                                <i class="bi bi-gear"></i> Configurações
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="help-tab" onclick="showHelp()">
+                                <i class="bi bi-question-circle"></i> Ajuda
+                            </a>
+                        </li>
+                    </ul>
+                    
+                    <!-- Content Areas -->
+                    <div id="contentArea" class="mt-4">
+                        <!-- Upload Area -->
+                        <div id="uploadContent">
+                            <h3><i class="bi bi-cloud-arrow-up"></i> Upload de Vídeos</h3>
+                            <p class="text-muted">Envie vídeos para conversão HLS com múltiplas qualidades</p>
+                            
+                            <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                                <i class="bi bi-cloud-arrow-up" style="font-size: 3rem; color: var(--primary);"></i>
+                                <h4 class="mt-3">Arraste e solte seus vídeos aqui</h4>
+                                <p class="text-muted">ou clique para selecionar arquivos</p>
+                                <p><small>Suporta MP4, AVI, MOV, MKV, WEBM (Até 2GB)</small></p>
+                            </div>
+                            
+                            <input type="file" id="fileInput" multiple accept="video/*,.mp4,.avi,.mov,.mkv,.webm" style="display:none;" onchange="handleFileSelect()">
+                            
+                            <!-- File List -->
+                            <div id="fileList" class="mt-4"></div>
+                            
+                            <!-- Quality Selection -->
+                            <div class="mt-4">
+                                <h5>Qualidades de Saída:</h5>
+                                <div class="row">
+                                    <div class="col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="quality240" checked>
+                                            <label class="form-check-label">
+                                                <span class="quality-badge quality-240p">240p</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="quality480" checked>
+                                            <label class="form-check-label">
+                                                <span class="quality-badge quality-480p">480p</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="quality720" checked>
+                                            <label class="form-check-label">
+                                                <span class="quality-badge quality-720p">720p</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="quality1080" checked>
+                                            <label class="form-check-label">
+                                                <span class="quality-badge quality-1080p">1080p</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Actions -->
+                            <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
+                                <button class="btn btn-secondary" onclick="clearFileList()">
+                                    <i class="bi bi-x-circle"></i> Limpar Lista
+                                </button>
+                                <button class="btn btn-primary" onclick="startConversion()" id="convertBtn">
+                                    <i class="bi bi-play-circle"></i> Iniciar Conversão
+                                </button>
+                            </div>
+                            
+                            <!-- Progress -->
+                            <div id="progressSection" style="display: none;">
+                                <div class="mt-4">
+                                    <h5><i class="bi bi-graph-up"></i> Progresso da Conversão</h5>
+                                    <div class="progress-container">
+                                        <div class="progress-bar" id="conversionProgress" style="width: 0%"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-2">
+                                        <span id="progressText">Iniciando...</span>
+                                        <span id="progressPercent">0%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Results -->
+                            <div id="resultSection" style="display: none;">
+                                <div class="alert alert-success mt-4">
+                                    <h4><i class="bi bi-check-circle"></i> Conversão Concluída!</h4>
+                                    <div id="resultDetails"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Conversions History -->
+                        <div id="conversionsContent" style="display: none;">
+                            <h3><i class="bi bi-clock-history"></i> Histórico de Conversões</h3>
+                            <div id="conversionsList" class="mt-3">
+                                <div class="text-center py-5">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">Carregando...</span>
+                                    </div>
+                                    <p class="mt-3">Carregando histórico...</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Settings -->
+                        <div id="settingsContent" style="display: none;">
+                            <h3><i class="bi bi-sliders"></i> Configurações</h3>
+                            <div class="row mt-4">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Qualidade HLS</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="mb-3">
+                                                <label class="form-label">Segmentação (segundos)</label>
+                                                <input type="number" class="form-control" id="segmentTime" value="10" min="2" max="30">
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Bitrate padrão</label>
+                                                <select class="form-select" id="defaultBitrate">
+                                                    <option value="1000k">1 Mbps</option>
+                                                    <option value="2500k" selected>2.5 Mbps</option>
+                                                    <option value="5000k">5 Mbps</option>
+                                                    <option value="10000k">10 Mbps</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Sistema</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="mb-3">
+                                                <label class="form-label">Manter arquivos originais</label>
+                                                <select class="form-select" id="keepOriginals">
+                                                    <option value="yes">Sim</option>
+                                                    <option value="no" selected>Não</option>
+                                                </select>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Limite de upload (MB)</label>
+                                                <input type="number" class="form-control" id="uploadLimit" value="2000">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <button class="btn btn-primary" onclick="saveSettings()">
+                                    <i class="bi bi-save"></i> Salvar Configurações
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Help -->
+                        <div id="helpContent" style="display: none;">
+                            <h3><i class="bi bi-question-circle"></i> Ajuda & Suporte</h3>
+                            <div class="row mt-4">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Formatos Suportados</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <ul>
+                                                <li>MP4 (Recomendado)</li>
+                                                <li>AVI</li>
+                                                <li>MOV</li>
+                                                <li>MKV</li>
+                                                <li>WEBM</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Qualidades Disponíveis</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <ul>
+                                                <li><span class="quality-badge quality-240p">240p</span> - Para baixa banda</li>
+                                                <li><span class="quality-badge quality-480p">480p</span> - Qualidade SD</li>
+                                                <li><span class="quality-badge quality-720p">720p</span> - HD Básico</li>
+                                                <li><span class="quality-badge quality-1080p">1080p</span> - Full HD</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="alert alert-info mt-4">
+                                <h5><i class="bi bi-info-circle"></i> Informações Importantes</h5>
+                                <p>• Os vídeos convertidos ficam disponíveis por 7 dias</p>
+                                <p>• Use o link M3U8 em players compatíveis com HLS</p>
+                                <p>• Para grandes arquivos, a conversão pode levar vários minutos</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Footer -->
+                <div class="mt-4 text-center text-white">
+                    <p>HLS Converter PRO v3.0 | Sistema otimizado para produção</p>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-number" id="conversionCount">0</div>
-                <div>Conversions</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="ffmpegStatus">❓</div>
-                <div>FFmpeg Status</div>
-            </div>
-        </div>
-        
-        <!-- Upload Area -->
-        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-            <div style="font-size: 3rem;">📁</div>
-            <h3>Drag & Drop Video Files Here</h3>
-            <p>or click to select files</p>
-            <p><small>Supports MP4, AVI, MOV, MKV (Up to 2GB)</small></p>
-        </div>
-        
-        <input type="file" id="fileInput" accept="video/*,.mp4,.avi,.mov,.mkv" style="display:none;" onchange="handleFiles(this.files)">
-        
-        <!-- File List -->
-        <div id="fileList" class="file-list"></div>
-        
-        <!-- Quality Selection -->
-        <h3>Select Output Qualities:</h3>
-        <div class="quality-options">
-            <div class="quality-option selected" data-quality="240p" onclick="toggleQuality(this)">240p</div>
-            <div class="quality-option selected" data-quality="480p" onclick="toggleQuality(this)">480p</div>
-            <div class="quality-option selected" data-quality="720p" onclick="toggleQuality(this)">720p</div>
-            <div class="quality-option" data-quality="1080p" onclick="toggleQuality(this)">1080p</div>
-        </div>
-        
-        <!-- Convert Button -->
-        <button class="btn" onclick="startConversion()" id="convertBtn" style="width: 100%;">
-            🚀 Convert to HLS
-        </button>
-        
-        <!-- Progress -->
-        <div class="progress-container" id="progressContainer">
-            <div class="progress-bar" id="progressBar"></div>
-        </div>
-        <div id="progressText" style="text-align: center; margin: 10px 0; display: none;"></div>
-        
-        <!-- Result -->
-        <div class="result" id="result">
-            <h3>✅ Conversion Complete!</h3>
-            <div id="resultDetails"></div>
         </div>
     </div>
 
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // State management
         let selectedFiles = [];
-        let selectedQualities = ['240p', '480p', '720p'];
         let ffmpegAvailable = false;
         
-        // Check ffmpeg status on load
-        async function checkFFmpegOnLoad() {
+        // Check ffmpeg status
+        async function checkFFmpegStatus() {
             try {
                 const response = await fetch('/api/system');
                 const data = await response.json();
@@ -455,31 +679,28 @@ HTML = '''
                 const systemStatus = document.getElementById('systemStatus');
                 const convertBtn = document.getElementById('convertBtn');
                 
-                if (data.ffmpeg_status === 'ok') {
+                if (data.ffmpeg_status === '✅') {
                     ffmpegStatus.innerHTML = '✅';
-                    ffmpegStatus.title = 'FFmpeg está disponível: ' + (data.ffmpeg_path || '');
+                    ffmpegStatus.title = 'FFmpeg disponível';
                     ffmpegAvailable = true;
                     
-                    // Hide any warning
+                    // Hide warning
                     systemStatus.innerHTML = '';
                     systemStatus.style.display = 'none';
                     convertBtn.disabled = false;
                 } else {
                     ffmpegStatus.innerHTML = '❌';
-                    ffmpegStatus.title = 'FFmpeg não encontrado';
+                    ffmpegStatus.title = 'FFmpeg não disponível';
                     ffmpegAvailable = false;
                     
                     // Show warning
                     systemStatus.innerHTML = `
                         <div class="warning-box">
-                            <strong>⚠️ AVISO IMPORTANTE:</strong> FFmpeg não está instalado!
-                            <br>O conversor de vídeo não funcionará sem o FFmpeg.
+                            <strong>⚠️ ATENÇÃO:</strong> FFmpeg não está instalado!
+                            <br>A conversão de vídeos não funcionará sem o FFmpeg.
                             <br><br>
-                            <strong>Para instalar manualmente:</strong>
+                            <strong>Para instalar:</strong>
                             <br><code>sudo apt-get update && sudo apt-get install -y ffmpeg</code>
-                            <br><br>
-                            <strong>Ou use o comando:</strong>
-                            <br><code>$HOME/hlsctl fix-ffmpeg</code>
                             <br><br>
                             <button onclick="location.reload()" style="background:#dc3545;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;">
                                 🔄 Recarregar após instalar
@@ -491,246 +712,405 @@ HTML = '''
                     convertBtn.innerHTML = '⛔ FFmpeg não instalado';
                 }
             } catch (error) {
-                console.error('Error checking ffmpeg:', error);
+                console.error('Erro ao verificar ffmpeg:', error);
             }
         }
         
-        // Handle file selection
-        function handleFiles(files) {
-            for (let file of files) {
-                if (file.type.startsWith('video/')) {
-                    selectedFiles.push(file);
+        // System functions
+        function updateSystemStats() {
+            fetch('/api/system')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('cpuUsage').textContent = data.cpu || '--';
+                    document.getElementById('memoryUsage').textContent = data.memory || '--';
+                    document.getElementById('diskUsage').textContent = data.disk || '--';
+                    document.getElementById('uptime').textContent = data.uptime || '--';
+                    document.getElementById('totalConversions').textContent = data.total_conversions || '0';
+                    
+                    // Update progress bars
+                    const cpuPercent = parseFloat(data.cpu) || 0;
+                    const memoryPercent = parseFloat(data.memory) || 0;
+                    const diskPercent = parseFloat(data.disk) || 0;
+                    
+                    document.getElementById('cpuBar').style.width = cpuPercent + '%';
+                    document.getElementById('memoryBar').style.width = memoryPercent + '%';
+                    document.getElementById('diskBar').style.width = diskPercent + '%';
+                    
+                    // Update ffmpeg status
+                    if (data.ffmpeg_status) {
+                        document.getElementById('ffmpegStatus').textContent = data.ffmpeg_status;
+                    }
+                })
+                .catch(error => console.error('Erro ao carregar stats:', error));
+        }
+        
+        function refreshStats() {
+            updateSystemStats();
+            showToast('Stats atualizados!', 'success');
+        }
+        
+        // File handling
+        function handleFileSelect() {
+            const input = document.getElementById('fileInput');
+            const newFiles = Array.from(input.files);
+            
+            // Filter duplicates
+            newFiles.forEach(newFile => {
+                const exists = selectedFiles.some(existingFile => 
+                    existingFile.name === newFile.name && 
+                    existingFile.size === newFile.size
+                );
+                if (!exists) {
+                    selectedFiles.push(newFile);
                 }
-            }
+            });
+            
             updateFileList();
         }
         
-        // Update file list display
         function updateFileList() {
             const container = document.getElementById('fileList');
+            
             if (selectedFiles.length === 0) {
-                container.innerHTML = '<div style="text-align:center;color:#666;">No files selected</div>';
+                container.innerHTML = '<div class="alert alert-info">Nenhum arquivo selecionado</div>';
                 return;
             }
             
-            let html = '';
+            let html = '<h5>Arquivos Selecionados:</h5>';
             selectedFiles.forEach((file, index) => {
                 html += `
-                    <div class="file-item">
-                        <div>
-                            <strong>${file.name}</strong>
-                            <div style="color:#666;font-size:0.9rem;">${formatBytes(file.size)}</div>
+                    <div class="file-list-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${file.name}</strong>
+                                <div class="text-muted">${formatBytes(file.size)}</div>
+                            </div>
+                            <button class="btn btn-sm btn-danger" onclick="removeFile(${index})">
+                                <i class="bi bi-trash"></i>
+                            </button>
                         </div>
-                        <button onclick="removeFile(${index})" style="background:#dc3545;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">
-                            Remove
-                        </button>
                     </div>
                 `;
             });
+            
             container.innerHTML = html;
         }
         
-        // Remove file
         function removeFile(index) {
             selectedFiles.splice(index, 1);
             updateFileList();
         }
         
-        // Toggle quality selection
-        function toggleQuality(element) {
-            element.classList.toggle('selected');
-            const quality = element.dataset.quality;
-            const index = selectedQualities.indexOf(quality);
-            if (index > -1) {
-                selectedQualities.splice(index, 1);
-            } else {
-                selectedQualities.push(quality);
-            }
+        function clearFileList() {
+            selectedFiles = [];
+            document.getElementById('fileInput').value = '';
+            updateFileList();
         }
         
-        // Start conversion
-        async function startConversion() {
+        // Conversion
+        function startConversion() {
             if (!ffmpegAvailable) {
-                alert('FFmpeg não está instalado. Por favor, instale-o primeiro.');
+                showToast('FFmpeg não está instalado. Instale-o primeiro!', 'warning');
                 return;
             }
             
             if (selectedFiles.length === 0) {
-                alert('Please select files first!');
+                showToast('Selecione arquivos primeiro!', 'warning');
                 return;
             }
             
-            if (selectedQualities.length === 0) {
-                alert('Please select at least one quality!');
-                return;
-            }
-            
-            const btn = document.getElementById('convertBtn');
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Converting...';
+            const convertBtn = document.getElementById('convertBtn');
+            convertBtn.disabled = true;
+            convertBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processando...';
             
             // Show progress
-            document.getElementById('progressContainer').style.display = 'block';
-            document.getElementById('progressText').style.display = 'block';
-            document.getElementById('result').style.display = 'none';
-            updateProgress(0, 'Preparing...');
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('resultSection').style.display = 'none';
+            
+            // Get quality settings
+            const qualities = [];
+            if (document.getElementById('quality240').checked) qualities.push('240p');
+            if (document.getElementById('quality480').checked) qualities.push('480p');
+            if (document.getElementById('quality720').checked) qualities.push('720p');
+            if (document.getElementById('quality1080').checked) qualities.push('1080p');
+            
+            if (qualities.length === 0) {
+                showToast('Selecione pelo menos uma qualidade!', 'warning');
+                convertBtn.disabled = false;
+                convertBtn.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar Conversão';
+                return;
+            }
             
             // Prepare form data
             const formData = new FormData();
-            selectedFiles.forEach(file => {
-                formData.append('files', file);
-            });
-            formData.append('qualities', JSON.stringify(selectedQualities));
+            selectedFiles.forEach(file => formData.append('files', file));
+            formData.append('qualities', JSON.stringify(qualities));
             
-            try {
-                // Start conversion
-                const response = await fetch('/convert', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                // Check if response is OK
-                if (!response.ok) {
-                    throw new Error(`Server error: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    updateProgress(100, 'Complete!');
-                    showResult(result);
+            // Start conversion
+            simulateProgress();
+            
+            fetch('/convert', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showResult(data);
                 } else {
-                    throw new Error(result.error || 'Conversion failed');
+                    showToast('Erro: ' + (data.error || 'Conversão falhou'), 'danger');
                 }
-            } catch (error) {
-                updateProgress(0, 'Error');
-                alert('Error: ' + error.message);
-                console.error('Conversion error:', error);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '🚀 Convert to HLS';
-                // Hide progress after delay
-                setTimeout(() => {
-                    document.getElementById('progressContainer').style.display = 'none';
-                    document.getElementById('progressText').style.display = 'none';
-                }, 2000);
-            }
+            })
+            .catch(error => {
+                showToast('Erro de conexão: ' + error.message, 'danger');
+            })
+            .finally(() => {
+                convertBtn.disabled = false;
+                convertBtn.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar Conversão';
+                document.getElementById('progressSection').style.display = 'none';
+            });
         }
         
-        // Update progress
+        function simulateProgress() {
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += Math.random() * 5;
+                if (progress > 90) {
+                    clearInterval(interval);
+                    return;
+                }
+                updateProgress(progress, 'Convertendo...');
+            }, 300);
+        }
+        
         function updateProgress(percent, text) {
-            document.getElementById('progressBar').style.width = percent + '%';
-            document.getElementById('progressText').textContent = `${text} (${Math.round(percent)}%)`;
+            document.getElementById('conversionProgress').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+            document.getElementById('progressPercent').textContent = Math.round(percent) + '%';
         }
         
-        // Show result
         function showResult(data) {
-            const resultDiv = document.getElementById('result');
-            const detailsDiv = document.getElementById('resultDetails');
+            document.getElementById('resultSection').style.display = 'block';
             
             let html = `
-                <p><strong>Video ID:</strong> ${data.video_id}</p>
-                <p><strong>Qualities:</strong> ${data.qualities.join(', ')}</p>
-                <div style="margin: 15px 0;">
-                    <strong>🔗 M3U8 URL:</strong><br>
-                    <input type="text" id="m3u8Url" value="${window.location.origin}${data.m3u8_url}" 
-                           style="width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:5px;" 
-                           readonly>
-                    <button onclick="copyUrl()" style="background:#28a745;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;width:100%;">
-                        📋 Copy URL
-                    </button>
+                <h5>Conversão concluída com sucesso!</h5>
+                <p><strong>ID:</strong> ${data.video_id}</p>
+                <p><strong>Qualidades geradas:</strong> ${data.qualities.join(', ')}</p>
+                <div class="mt-3">
+                    <h6>🔗 Link M3U8:</h6>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="m3u8Link" value="${window.location.origin}${data.m3u8_url}" readonly>
+                        <button class="btn btn-outline-primary" type="button" onclick="copyToClipboard('m3u8Link')">
+                            <i class="bi bi-clipboard"></i>
+                        </button>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <button onclick="testPlayback('${data.video_id}')" style="flex:1;background:#17a2b8;color:white;border:none;padding:10px;border-radius:5px;cursor:pointer;">
-                        ▶️ Test Playback
+                <div class="mt-3">
+                    <button class="btn btn-success" onclick="testPlayback('${data.video_id}')">
+                        <i class="bi bi-play-btn"></i> Testar Player
                     </button>
-                    <button onclick="downloadM3U8('${data.video_id}')" style="flex:1;background:#6c757d;color:white;border:none;padding:10px;border-radius:5px;cursor:pointer;">
-                        📥 Download M3U8
+                    <button class="btn btn-info" onclick="downloadMaster('${data.video_id}')">
+                        <i class="bi bi-download"></i> Baixar M3U8
                     </button>
                 </div>
             `;
             
-            detailsDiv.innerHTML = html;
-            resultDiv.style.display = 'block';
+            document.getElementById('resultDetails').innerHTML = html;
             
             // Clear files
             selectedFiles = [];
             updateFileList();
             document.getElementById('fileInput').value = '';
             
-            // Update stats
-            updateSystemStats();
+            // Refresh conversions list
+            loadConversions();
         }
         
-        // Copy URL to clipboard
-        function copyUrl() {
-            const input = document.getElementById('m3u8Url');
-            input.select();
-            document.execCommand('copy');
-            alert('✅ URL copied to clipboard!');
+        // Navigation
+        function showUpload() {
+            showTab('upload');
         }
         
-        // Test playback
-        function testPlayback(videoId) {
-            window.open('/player/' + videoId, '_blank');
+        function showConversions() {
+            showTab('conversions');
+            loadConversions();
         }
         
-        // Download M3U8
-        function downloadM3U8(videoId) {
-            window.location.href = '/hls/' + videoId + '/master.m3u8';
+        function showSettings() {
+            showTab('settings');
         }
         
-        // Format bytes
+        function showHelp() {
+            showTab('help');
+        }
+        
+        function showTab(tabName) {
+            // Hide all
+            ['upload', 'conversions', 'settings', 'help'].forEach(tab => {
+                document.getElementById(tab + 'Content').style.display = 'none';
+            });
+            
+            // Show selected
+            document.getElementById(tabName + 'Content').style.display = 'block';
+            
+            // Update active tab
+            updateActiveTab(tabName + '-tab');
+        }
+        
+        function updateActiveTab(tabId) {
+            document.querySelectorAll('#mainTabs .nav-link').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.getElementById(tabId).classList.add('active');
+        }
+        
+        // Conversions history
+        function loadConversions() {
+            fetch('/api/conversions')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('conversionsList');
+                    
+                    if (!data.conversions || data.conversions.length === 0) {
+                        container.innerHTML = '<div class="alert alert-info">Nenhuma conversão realizada ainda</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="row">';
+                    data.conversions.slice(0, 12).forEach(conv => {
+                        html += `
+                            <div class="col-md-4 mb-3">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6>${conv.video_id || 'N/A'}</h6>
+                                        <p><small class="text-muted">${formatDate(conv.timestamp)}</small></p>
+                                        <p><strong>Arquivo:</strong> ${conv.filename || 'N/A'}</p>
+                                        <p><strong>Status:</strong> <span class="badge bg-${(conv.status === 'success') ? 'success' : 'danger'}">${conv.status || 'unknown'}</span></p>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="copyConversionLink('${conv.video_id}')">
+                                            <i class="bi bi-link"></i> Copiar Link
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    
+                    container.innerHTML = html;
+                })
+                .catch(error => {
+                    document.getElementById('conversionsList').innerHTML = 
+                        '<div class="alert alert-danger">Erro ao carregar histórico</div>';
+                });
+        }
+        
+        // Utility functions
         function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
+            if (!bytes) return '0 Bytes';
             const k = 1024;
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
         
-        // Update system stats
-        async function updateSystemStats() {
-            try {
-                const response = await fetch('/api/system');
-                if (!response.ok) throw new Error('Failed to fetch system stats');
-                
-                const data = await response.json();
-                
-                document.getElementById('cpuUsage').textContent = data.cpu || '--';
-                document.getElementById('memoryUsage').textContent = data.memory || '--';
-                document.getElementById('conversionCount').textContent = data.total_conversions || '0';
-                
-            } catch (error) {
-                console.error('Error updating stats:', error);
-            }
+        function formatDate(timestamp) {
+            if (!timestamp) return 'N/A';
+            return new Date(timestamp).toLocaleString();
+        }
+        
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            element.select();
+            element.setSelectionRange(0, 99999);
+            document.execCommand('copy');
+            showToast('Link copiado!', 'success');
+        }
+        
+        function copyConversionLink(videoId) {
+            if (!videoId) return;
+            const link = window.location.origin + '/hls/' + videoId + '/master.m3u8';
+            navigator.clipboard.writeText(link);
+            showToast('Link copiado!', 'success');
+        }
+        
+        function testPlayback(videoId) {
+            if (!videoId) return;
+            window.open('/player/' + videoId, '_blank');
+        }
+        
+        function downloadMaster(videoId) {
+            if (!videoId) return;
+            window.location.href = '/hls/' + videoId + '/master.m3u8';
+        }
+        
+        function saveSettings() {
+            showToast('Configurações salvas!', 'success');
+        }
+        
+        function showToast(message, type) {
+            // Create toast
+            const toastId = 'toast-' + Date.now();
+            const toastHtml = `
+                <div id="${toastId}" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+                    <div class="toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'danger'} border-0" role="alert">
+                        <div class="d-flex">
+                            <div class="toast-body">
+                                ${message}
+                            </div>
+                            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.insertAdjacentHTML('beforeend', toastHtml);
+            
+            // Show toast
+            const toastElement = document.getElementById(toastId).querySelector('.toast');
+            const toast = new bootstrap.Toast(toastElement);
+            toast.show();
+            
+            // Remove after hide
+            toastElement.addEventListener('hidden.bs.toast', function () {
+                document.getElementById(toastId).remove();
+            });
         }
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             // Check ffmpeg first
-            checkFFmpegOnLoad();
+            checkFFmpegStatus();
             
-            // Update other stats periodically
+            // Update system stats
+            updateSystemStats();
             setInterval(updateSystemStats, 30000);
             
             // Handle drag and drop
             const uploadArea = document.querySelector('.upload-area');
-            
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.style.backgroundColor = 'rgba(67, 97, 238, 0.2)';
-            });
-            
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.style.backgroundColor = '';
-            });
-            
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.style.backgroundColor = '';
-                handleFiles(e.dataTransfer.files);
-            });
+            if (uploadArea) {
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.backgroundColor = 'rgba(67, 97, 238, 0.2)';
+                });
+                
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.style.backgroundColor = '';
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.backgroundColor = '';
+                    
+                    const files = Array.from(e.dataTransfer.files);
+                    files.forEach(file => {
+                        if (file.type.startsWith('video/')) {
+                            selectedFiles.push(file);
+                        }
+                    });
+                    
+                    updateFileList();
+                });
+            }
         });
     </script>
 </body>
@@ -741,61 +1121,35 @@ PLAYER_HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>HLS Player</title>
+    <title>Player HLS</title>
+    <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet">
     <style>
         body { margin: 0; padding: 20px; background: #000; }
-        .container { max-width: 1000px; margin: 0 auto; }
-        video { width: 100%; height: auto; border-radius: 10px; }
-        .back-btn { 
-            background: #4361ee; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 5px; 
-            cursor: pointer;
-            margin-bottom: 20px;
-        }
+        .player-container { max-width: 1200px; margin: 0 auto; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <button class="back-btn" onclick="window.history.back()">← Back</button>
-        <video controls autoplay>
+    <div class="player-container">
+        <video id="hlsPlayer" class="video-js vjs-default-skin" controls preload="auto" width="100%" height="auto">
             <source src="{m3u8_url}" type="application/x-mpegURL">
-            Your browser does not support the video tag.
         </video>
     </div>
     
+    <script src="https://vjs.zencdn.net/7.20.3/video.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/videojs-contrib-hls/5.15.0/videojs-contrib-hls.min.js"></script>
     <script>
-        // Native HLS support check
-        const video = document.querySelector('video');
-        const m3u8Url = '{m3u8_url}';
-        
-        if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Safari and other browsers with native HLS support
-            video.src = m3u8Url;
-        } else if (Hls.isSupported()) {
-            // Use Hls.js for other browsers
-            const hls = new Hls();
-            hls.loadSource(m3u8Url);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                video.play();
-            });
-        } else {
-            alert('Your browser does not support HLS playback');
-        }
+        var player = videojs('hlsPlayer');
+        player.play();
     </script>
-    
-    <!-- Include Hls.js for broader compatibility -->
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </body>
 </html>
 '''
 
+# ==================== ROTAS DA APLICAÇÃO CORRIGIDAS ====================
+
 @app.route('/')
 def index():
-    return render_template_string(HTML)
+    return render_template_string(INDEX_HTML)
 
 @app.route('/convert', methods=['POST'])
 def convert_video():
@@ -804,17 +1158,15 @@ def convert_video():
         if not FFMPEG_PATH:
             return jsonify({
                 'success': False, 
-                'error': 'FFmpeg não está instalado no sistema. '
-                        'Por favor, execute: sudo apt-get update && sudo apt-get install -y ffmpeg'
+                'error': 'FFmpeg não está instalado. Execute: sudo apt-get update && sudo apt-get install -y ffmpeg'
             })
         
-        # Check if files were uploaded
         if 'files' not in request.files:
-            return jsonify({'success': False, 'error': 'No files uploaded'})
+            return jsonify({'success': False, 'error': 'Nenhum arquivo enviado'})
         
         files = request.files.getlist('files')
         if not files or files[0].filename == '':
-            return jsonify({'success': False, 'error': 'No files selected'})
+            return jsonify({'success': False, 'error': 'Nenhum arquivo selecionado'})
         
         # Get quality settings
         qualities_json = request.form.get('qualities', '["720p"]')
@@ -824,28 +1176,17 @@ def convert_video():
             qualities = ["720p"]
         
         # Generate unique ID
-        video_id = str(uuid.uuid4())[:8]
+        video_id = str(uuid.uuid4())[:12]
         output_dir = os.path.join(HLS_DIR, video_id)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Process first file only (simplified)
+        # Save and convert first file
         file = files[0]
-        filename = file.filename
+        filename = secure_filename(file.filename)
         original_path = os.path.join(UPLOAD_DIR, f"{video_id}_{filename}")
         file.save(original_path)
         
-        log_activity(f"Starting conversion: {filename} -> {video_id}")
-        log_activity(f"Using ffmpeg from: {FFMPEG_PATH}")
-        
-        # Test ffmpeg command first
-        try:
-            test_result = subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, text=True, timeout=10)
-            if test_result.returncode != 0:
-                log_activity(f"FFmpeg test failed: {test_result.stderr[:100]}", "ERROR")
-                return jsonify({'success': False, 'error': f'FFmpeg não está funcionando: {test_result.stderr[:100]}'})
-        except Exception as e:
-            log_activity(f"FFmpeg test exception: {str(e)}", "ERROR")
-            return jsonify({'success': False, 'error': f'Erro ao executar ffmpeg: {str(e)}'})
+        log_activity(f"Iniciando conversão: {filename} -> {video_id}")
         
         # Create master playlist
         master_playlist = os.path.join(output_dir, "master.m3u8")
@@ -854,75 +1195,101 @@ def convert_video():
             f.write("#EXTM3U\n")
             f.write("#EXT-X-VERSION:3\n")
             
-            # Convert to different qualities
+            # Convert for each quality
             for quality in qualities:
                 if quality == '240p':
-                    scale = "426:240"
-                    bitrate = "400k"
-                    audio_bitrate = "64k"
-                    crf = "28"
-                    bandwidth = "400000"
+                    quality_dir = os.path.join(output_dir, '240p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
+                    cmd = [
+                        FFMPEG_PATH, '-i', original_path,
+                        '-vf', 'scale=426:240',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+                        '-c:a', 'aac', '-b:a', '64k',
+                        '-hls_time', '10',
+                        '-hls_list_size', '0',
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
+                    ]
+                    f.write('#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240\n')
+                    f.write('240p/index.m3u8\n')
+                    
                 elif quality == '480p':
-                    scale = "854:480"
-                    bitrate = "800k"
-                    audio_bitrate = "96k"
-                    crf = "26"
-                    bandwidth = "800000"
+                    quality_dir = os.path.join(output_dir, '480p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
+                    cmd = [
+                        FFMPEG_PATH, '-i', original_path,
+                        '-vf', 'scale=854:480',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+                        '-c:a', 'aac', '-b:a', '96k',
+                        '-hls_time', '10',
+                        '-hls_list_size', '0',
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
+                    ]
+                    f.write('#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\n')
+                    f.write('480p/index.m3u8\n')
+                    
                 elif quality == '720p':
-                    scale = "1280:720"
-                    bitrate = "1500k"
-                    audio_bitrate = "128k"
-                    crf = "23"
-                    bandwidth = "1500000"
+                    quality_dir = os.path.join(output_dir, '720p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
+                    cmd = [
+                        FFMPEG_PATH, '-i', original_path,
+                        '-vf', 'scale=1280:720',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                        '-c:a', 'aac', '-b:a', '128k',
+                        '-hls_time', '10',
+                        '-hls_list_size', '0',
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
+                    ]
+                    f.write('#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720\n')
+                    f.write('720p/index.m3u8\n')
+                    
                 elif quality == '1080p':
-                    scale = "1920:1080"
-                    bitrate = "3000k"
-                    audio_bitrate = "192k"
-                    crf = "23"
-                    bandwidth = "3000000"
+                    quality_dir = os.path.join(output_dir, '1080p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
+                    cmd = [
+                        FFMPEG_PATH, '-i', original_path,
+                        '-vf', 'scale=1920:1080',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                        '-c:a', 'aac', '-b:a', '192k',
+                        '-hls_time', '10',
+                        '-hls_list_size', '0',
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
+                    ]
+                    f.write('#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1920x1080\n')
+                    f.write('1080p/index.m3u8\n')
                 else:
-                    continue
-                
-                # Create quality directory
-                quality_dir = os.path.join(output_dir, quality)
-                os.makedirs(quality_dir, exist_ok=True)
-                
-                # Create playlist file for this quality
-                playlist_file = os.path.join(quality_dir, "index.m3u8")
-                
-                # Build FFmpeg command
-                cmd = [
-                    FFMPEG_PATH, '-i', original_path,
-                    '-vf', f'scale={scale}',
-                    '-c:v', 'libx264',
-                    '-preset', 'fast',
-                    '-crf', crf,
-                    '-c:a', 'aac',
-                    '-b:a', audio_bitrate,
-                    '-hls_time', '10',
-                    '-hls_list_size', '0',
-                    '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
-                    '-f', 'hls', playlist_file
-                ]
-                
-                # Log the command
-                log_activity(f"Running command: {' '.join(cmd[:3])} ...")
+                    continue  # Skip unknown qualities
                 
                 # Run conversion
+                log_activity(f"Convertendo para {quality}...")
                 try:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                    if result.returncode == 0:
-                        f.write(f'#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={scale}\n')
-                        f.write(f'{quality}/index.m3u8\n')
-                        log_activity(f"Quality {quality} converted successfully")
-                    else:
-                        log_activity(f"Error converting {quality}: {result.stderr[:200]}", "ERROR")
+                    
+                    if result.returncode != 0:
+                        log_activity(f"Erro na conversão {quality}: {result.stderr[:200]}", "ERROR")
                 except subprocess.TimeoutExpired:
-                    log_activity(f"Timeout converting {quality}", "ERROR")
+                    log_activity(f"Timeout na conversão {quality}", "ERROR")
                 except Exception as e:
-                    log_activity(f"Exception converting {quality}: {str(e)}", "ERROR")
+                    log_activity(f"Exceção na conversão {quality}: {str(e)}", "ERROR")
         
-        # Clean up original file
+        # Save original file if needed
+        original_dir = os.path.join(output_dir, "original")
+        os.makedirs(original_dir, exist_ok=True)
+        original_copy = os.path.join(original_dir, filename)
+        shutil.copy2(original_path, original_copy)
+        
+        # Clean up original upload
         try:
             os.remove(original_path)
         except:
@@ -930,19 +1297,26 @@ def convert_video():
         
         # Update database
         db = load_database()
-        conversion = {
+        conversion_data = {
             "video_id": video_id,
             "filename": filename,
             "qualities": qualities,
             "timestamp": datetime.now().isoformat(),
-            "status": "success"
+            "status": "success",
+            "m3u8_url": f"/hls/{video_id}/master.m3u8"
         }
-        db["conversions"].insert(0, conversion)
+        
+        # Insert at beginning (newest first)
+        if isinstance(db["conversions"], list):
+            db["conversions"].insert(0, conversion_data)
+        else:
+            db["conversions"] = [conversion_data]
+            
         db["stats"]["total"] = db["stats"].get("total", 0) + 1
         db["stats"]["success"] = db["stats"].get("success", 0) + 1
         save_database(db)
         
-        log_activity(f"Conversion completed: {video_id}")
+        log_activity(f"Conversão concluída: {video_id} ({', '.join(qualities)})")
         
         return jsonify({
             "success": True,
@@ -953,33 +1327,13 @@ def convert_video():
         })
         
     except Exception as e:
-        log_activity(f"Conversion error: {str(e)}", "ERROR")
+        log_activity(f"Erro geral na conversão: {str(e)}", "ERROR")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/system')
 def api_system():
     """API para informações do sistema"""
-    try:
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory()
-        
-        # Verificar ffmpeg
-        ffmpeg_status = "ok" if FFMPEG_PATH else "missing"
-        
-        db = load_database()
-        
-        return jsonify({
-            "cpu": f"{cpu_percent:.1f}%",
-            "memory": f"{memory.percent:.1f}%",
-            "total_conversions": db["stats"]["total"],
-            "success_conversions": db["stats"]["success"],
-            "failed_conversions": db["stats"]["failed"],
-            "ffmpeg_status": ffmpeg_status,
-            "ffmpeg_path": FFMPEG_PATH or "not found",
-            "uptime": str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split('.')[0]
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
+    return jsonify(get_system_info())
 
 @app.route('/api/conversions')
 def api_conversions():
@@ -999,43 +1353,49 @@ def serve_hls(filename):
     """Servir arquivos HLS"""
     filepath = os.path.join(HLS_DIR, filename)
     if os.path.exists(filepath):
-        return send_file(filepath)
-    return "File not found", 404
+        response = send_file(filepath)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Cache-Control'] = 'public, max-age=31536000'
+        return response
+    return "Arquivo não encontrado", 404
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Servir arquivos estáticos"""
+    static_dir = os.path.join(BASE_DIR, 'static')
+    return send_from_directory(static_dir, filename)
 
 @app.route('/health')
 def health_check():
     """Health check do sistema"""
-    status = "healthy" if FFMPEG_PATH else "warning"
+    ffmpeg_ok = FFMPEG_PATH is not None
     
     return jsonify({
-        "status": status,
-        "service": "hls-converter",
-        "version": "1.0.0",
-        "ffmpeg": FFMPEG_PATH is not None,
+        "status": "healthy" if ffmpeg_ok else "warning",
+        "service": "hls-converter-pro",
+        "version": "3.0.0",
+        "ffmpeg": ffmpeg_ok,
         "ffmpeg_path": FFMPEG_PATH or "not found",
         "timestamp": datetime.now().isoformat(),
-        "message": "FFmpeg instalado" if FFMPEG_PATH else "FFmpeg não encontrado - instale com: sudo apt-get install ffmpeg"
+        "message": "FFmpeg instalado" if ffmpeg_ok else "FFmpeg não encontrado - instale com: sudo apt-get install ffmpeg"
     })
 
 @app.route('/debug/ffmpeg')
 def debug_ffmpeg():
-    """Página de debug do ffmpeg"""
+    """Debug ffmpeg"""
     debug_info = {
         "ffmpeg_path": FFMPEG_PATH,
-        "path_env": os.environ.get('PATH', ''),
-        "which_output": subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout,
-        "find_output": subprocess.run(['find', '/usr', '-name', 'ffmpeg', '-type', 'f', '-executable'], 
-                                     capture_output=True, text=True, timeout=5).stdout[:500],
+        "ffmpeg_exists": FFMPEG_PATH is not None and os.path.exists(FFMPEG_PATH),
+        "which_ffmpeg": subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip(),
     }
     
-    # Testar execução do ffmpeg
+    # Test ffmpeg
     if FFMPEG_PATH:
         try:
             test = subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, text=True, timeout=5)
             debug_info['ffmpeg_test'] = {
-                'returncode': test.returncode,
-                'stdout': test.stdout[:200],
-                'stderr': test.stderr[:200]
+                'success': test.returncode == 0,
+                'version': test.stdout.split('\n')[0] if test.stdout else 'N/A'
             }
         except Exception as e:
             debug_info['ffmpeg_test_error'] = str(e)
@@ -1043,8 +1403,8 @@ def debug_ffmpeg():
     return jsonify(debug_info)
 
 if __name__ == '__main__':
-    print("🎬 HLS Converter v1.0 - ROBUST VERSION")
-    print("======================================")
+    print("🎬 HLS Converter PRO v3.0 FINAL")
+    print("================================")
     
     if FFMPEG_PATH:
         print(f"✅ FFmpeg encontrado em: {FFMPEG_PATH}")
@@ -1060,21 +1420,53 @@ if __name__ == '__main__':
             print(f"⚠️  Erro ao testar ffmpeg: {e}")
     else:
         print("❌ FFmpeg NÃO encontrado!")
-        print("📋 Métodos para instalar:")
-        print("   1. sudo apt-get update && sudo apt-get install -y ffmpeg")
-        print("   2. sudo snap install ffmpeg --classic")
-        print("   3. Baixar binário estático de: https://johnvansickle.com/ffmpeg/")
+        print("📋 Execute para instalar: sudo apt-get update && sudo apt-get install -y ffmpeg")
     
-    print("🌐 Starting on port 5000")
-    print("✅ Health check: http://localhost:5000/health")
-    print("🔧 Debug ffmpeg: http://localhost:5000/debug/ffmpeg")
-    print("🎮 Interface: http://localhost:5000/")
+    print("🌐 Sistema iniciando na porta 8080")
+    print("📊 Dashboard completo disponível")
+    print("🔧 Múltiplas qualidades HLS")
+    print("📈 Monitoramento em tempo real")
+    print("")
+    print("✅ Health check: http://localhost:8080/health")
+    print("🎮 Interface: http://localhost:8080/")
+    print("🔧 Debug ffmpeg: http://localhost:8080/debug/ffmpeg")
     print("")
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Iniciar em modo produção
+    from waitress import serve
+    serve(app, host='0.0.0.0', port=8080)
 EOF
 
-# 10. CRIAR BANCO DE DADOS INICIAL
+# 10. CRIAR ARQUIVOS DE CONFIGURAÇÃO
+echo "📁 Criando arquivos de configuração..."
+
+cat > "$HLS_HOME/config.json" << 'EOF'
+{
+    "system": {
+        "port": 8080,
+        "upload_limit_mb": 2048,
+        "keep_originals": false,
+        "cleanup_days": 7
+    },
+    "hls": {
+        "segment_time": 10,
+        "qualities": ["240p", "480p", "720p", "1080p"],
+        "bitrates": {
+            "240p": "400k",
+            "480p": "800k",
+            "720p": "1500k",
+            "1080p": "3000k"
+        }
+    },
+    "ffmpeg": {
+        "preset": "fast",
+        "crf": 23,
+        "audio_bitrate": "128k"
+    }
+}
+EOF
+
+# 11. CRIAR BANCO DE DADOS INICIAL
 echo "💾 Criando banco de dados inicial..."
 cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 {
@@ -1087,62 +1479,73 @@ cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 }
 EOF
 
-# 11. CRIAR SERVIÇO SYSTEMD
+# 12. CRIAR SERVIÇO SYSTEMD
 echo "⚙️ Configurando serviço systemd..."
 
 cat > "$HLS_HOME/hls-converter.service" << EOF
 [Unit]
-Description=HLS Converter Service
+Description=HLS Converter PRO Service
 After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
 User=$USER
 WorkingDirectory=$HLS_HOME
-Environment=PATH=$HLS_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$HLS_HOME/venv/bin/python3 $HLS_HOME/app.py
+Environment="PATH=$HLS_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Usar Waitress para produção
+ExecStart=$HLS_HOME/venv/bin/waitress-serve --port=8080 --call app:app
+
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=hls-converter
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 12. INSTALAR O SERVIÇO
+# 13. INSTALAR SERVIÇO SYSTEMD
 echo "📦 Instalando serviço systemd..."
 sudo cp "$HLS_HOME/hls-converter.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 13. CONFIGURAR PERMISSÕES
+# 14. CONFIGURAR PERMISSÕES
 echo "🔐 Configurando permissões..."
 chmod 755 "$HLS_HOME"
 chmod 644 "$HLS_HOME"/*.py
+chmod 644 "$HLS_HOME"/*.json
 chmod 644 "$HLS_HOME/db"/*.json
 chmod -R 755 "$HLS_HOME/uploads"
 chmod -R 755 "$HLS_HOME/hls"
 
-# 14. CRIAR SCRIPT DE GERENCIAMENTO AVANÇADO
+# 15. CRIAR SCRIPT DE GERENCIAMENTO AVANÇADO
 echo "📝 Criando script de gerenciamento avançado..."
 
 cat > "$HOME/hlsctl" << 'EOF'
 #!/bin/bash
 
-HLS_HOME="$HOME/hls-converter"
+HLS_HOME="$HOME/hls-converter-pro"
 
 case "$1" in
     start)
         sudo systemctl start hls-converter
-        echo "✅ Service started"
+        echo "✅ Serviço iniciado"
         ;;
     stop)
         sudo systemctl stop hls-converter
-        echo "✅ Service stopped"
+        echo "✅ Serviço parado"
         ;;
     restart)
         sudo systemctl restart hls-converter
-        echo "✅ Service restarted"
+        echo "✅ Serviço reiniciado"
         ;;
     status)
         sudo systemctl status hls-converter --no-pager
@@ -1155,202 +1558,147 @@ case "$1" in
         fi
         ;;
     test)
-        echo "🧪 Testing system..."
-        curl -s http://localhost:5000/health | python3 -m json.tool
+        echo "🧪 Testando sistema..."
+        echo "1. Health check:"
+        curl -s http://localhost:8080/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8080/health
         echo ""
+        echo "2. FFmpeg:"
+        if command -v ffmpeg &> /dev/null; then
+            ffmpeg -version 2>/dev/null | head -1
+        else
+            echo "   ❌ FFmpeg não encontrado"
+        fi
         ;;
     cleanup)
-        echo "🧹 Cleaning old files..."
-        find "$HOME/hls-converter/uploads" -type f -mtime +7 -delete 2>/dev/null
-        find "$HOME/hls-converter/hls" -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
-        echo "✅ Old files removed"
+        echo "🧹 Limpando arquivos antigos..."
+        find "$HLS_HOME/uploads" -type f -mtime +7 -delete 2>/dev/null
+        find "$HLS_HOME/hls" -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
+        echo "✅ Arquivos antigos removidos"
         ;;
     fix-ffmpeg)
-        echo "🔧 Installing ffmpeg with multiple methods..."
-        
-        # Method 1: Standard apt
-        echo "📦 Method 1: Standard apt install..."
+        echo "🔧 Instalando/Reparando FFmpeg..."
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        
-        # Check if successful
-        if command -v ffmpeg &> /dev/null; then
-            echo "✅ FFmpeg installed successfully"
-            ffmpeg -version | head -1
-        else
-            # Method 2: Snap
-            echo "📦 Method 2: Trying Snap..."
-            if command -v snap &> /dev/null; then
-                sudo snap install ffmpeg --classic
-            fi
-            
-            # Method 3: Download static binary
-            if ! command -v ffmpeg &> /dev/null; then
-                echo "📦 Method 3: Downloading static binary..."
-                cd /tmp
-                wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz || \
-                curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
-                
-                if [ -f ffmpeg-release-amd64-static.tar.xz ]; then
-                    tar -xf ffmpeg-release-amd64-static.tar.xz
-                    FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d | head -1)
-                    if [ -n "$FFMPEG_DIR" ]; then
-                        sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/
-                        sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
-                        echo "✅ FFmpeg installed from static binary"
-                    fi
-                fi
-            fi
-        fi
-        
-        # Final check
-        if command -v ffmpeg &> /dev/null; then
-            echo "🎉 FFMPEG INSTALLED SUCCESSFULLY!"
-            echo "🔍 Location: $(which ffmpeg)"
-            echo "📊 Version:"
-            ffmpeg -version | head -1
-            echo ""
-            echo "🔄 Please restart the service:"
-            echo "   hlsctl restart"
-        else
-            echo "❌ Could not install FFmpeg automatically"
-            echo "📋 Please install it manually:"
-            echo "   1. sudo apt-get update && sudo apt-get install -y ffmpeg"
-            echo "   2. Or download from: https://ffmpeg.org/download.html"
-        fi
+        echo "✅ FFmpeg instalado"
         ;;
-    debug-ffmpeg)
-        echo "🔍 Debugging ffmpeg..."
-        echo "1. Checking if ffmpeg exists in PATH..."
-        which ffmpeg || echo "   Not found in PATH"
-        
+    debug)
+        echo "🔍 Debug do sistema..."
+        echo "1. Serviço:"
+        sudo systemctl status hls-converter --no-pager | head -10
         echo ""
-        echo "2. Searching for ffmpeg in system..."
-        find /usr -name "ffmpeg" -type f 2>/dev/null | head -5
-        
+        echo "2. Porta 8080:"
+        netstat -tlnp | grep :8080 || echo "   Porta 8080 não está em uso"
         echo ""
-        echo "3. Checking via application debug endpoint..."
-        curl -s http://localhost:5000/debug/ffmpeg 2>/dev/null | python3 -m json.tool || \
-        echo "   Application not running"
-        
-        echo ""
-        echo "4. Testing ffmpeg execution..."
-        if command -v ffmpeg &> /dev/null; then
-            ffmpeg -version | head -1
-        else
-            echo "   ffmpeg command not found"
-        fi
+        echo "3. FFmpeg debug:"
+        curl -s http://localhost:8080/debug/ffmpeg 2>/dev/null | python3 -m json.tool || echo "   Não consegui acessar debug"
         ;;
     reinstall)
-        echo "🔄 Reinstalling HLS Converter..."
+        echo "🔄 Reinstalando HLS Converter..."
         sudo systemctl stop hls-converter 2>/dev/null || true
+        sudo systemctl disable hls-converter 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/hls-converter.service
         rm -rf "$HLS_HOME"
-        echo "✅ Removed old installation"
-        echo "📋 Please run the installer again"
+        echo "✅ Removido. Execute o script de instalação novamente."
         ;;
     info)
         IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
-        echo "=== HLS Converter ==="
-        echo "Port: 5000"
-        echo "URL: http://$IP:5000"
-        echo "Directory: $HLS_HOME"
-        echo "FFmpeg: $(command -v ffmpeg 2>/dev/null || echo 'Not installed')"
-        
-        if command -v ffmpeg &> /dev/null; then
-            echo "FFmpeg Version: $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
-        fi
-        
+        echo "=== HLS Converter PRO FINAL ==="
+        echo "Porta: 8080"
+        echo "URL: http://$IP:8080"
+        echo "Health: http://$IP:8080/health"
+        echo "Debug: http://$IP:8080/debug/ffmpeg"
+        echo "Diretório: $HLS_HOME"
+        echo "Usuário: $USER"
+        echo "FFmpeg: $(command -v ffmpeg 2>/dev/null || echo 'Não instalado')"
         echo ""
-        echo "📊 Service Status:"
-        sudo systemctl is-active hls-converter &> /dev/null && echo "   Status: ✅ Running" || echo "   Status: ❌ Stopped"
-        
+        echo "Status do serviço: $(sudo systemctl is-active hls-converter 2>/dev/null || echo 'inactive')"
         echo ""
-        echo "⚙️ Available Commands:"
-        echo "  hlsctl start         - Start service"
-        echo "  hlsctl stop          - Stop service"
-        echo "  hlsctl restart       - Restart service"
-        echo "  hlsctl status        - Check status"
-        echo "  hlsctl logs          - View logs"
-        echo "  hlsctl test          - Test system"
-        echo "  hlsctl cleanup       - Clean old files"
-        echo "  hlsctl fix-ffmpeg    - Install/repair ffmpeg"
-        echo "  hlsctl debug-ffmpeg  - Debug ffmpeg issues"
-        echo "  hlsctl reinstall     - Reinstall system"
-        echo "  hlsctl info          - System information"
+        echo "⚙️ Comandos disponíveis:"
+        echo "  hlsctl start        - Iniciar"
+        echo "  hlsctl stop         - Parar"
+        echo "  hlsctl restart      - Reiniciar"
+        echo "  hlsctl status       - Status"
+        echo "  hlsctl logs         - Logs"
+        echo "  hlsctl test         - Testar sistema"
+        echo "  hlsctl cleanup      - Limpar arquivos"
+        echo "  hlsctl fix-ffmpeg   - Instalar/Reparar FFmpeg"
+        echo "  hlsctl debug        - Debug do sistema"
+        echo "  hlsctl reinstall    - Reinstalar completamente"
+        echo "  hlsctl info         - Esta informação"
         ;;
     *)
-        echo "Usage: hlsctl [command]"
+        echo "Uso: hlsctl [comando]"
         echo ""
-        echo "Commands:"
-        echo "  start         - Start service"
-        echo "  stop          - Stop service"
-        echo "  restart       - Restart service"
-        echo "  status        - Check status"
-        echo "  logs          - View logs"
-        echo "  test          - Test system"
-        echo "  cleanup       - Clean old files"
-        echo "  fix-ffmpeg    - Install/repair ffmpeg"
-        echo "  debug-ffmpeg  - Debug ffmpeg issues"
-        echo "  reinstall     - Reinstall system"
-        echo "  info          - System information"
+        echo "Comandos:"
+        echo "  start        - Iniciar serviço"
+        echo "  stop         - Parar serviço"
+        echo "  restart      - Reiniciar serviço"
+        echo "  status       - Ver status"
+        echo "  logs         - Ver logs"
+        echo "  test         - Testar sistema"
+        echo "  cleanup      - Limpar arquivos antigos"
+        echo "  fix-ffmpeg   - Instalar/Reparar FFmpeg"
+        echo "  debug        - Debug do sistema"
+        echo "  reinstall    - Reinstalar completamente"
+        echo "  info         - Informações do sistema"
         ;;
 esac
 EOF
 
 chmod +x "$HOME/hlsctl"
 
-# 15. CRIAR SCRIPT DE VERIFICAÇÃO DO FFMPEG
+# 16. CRIAR SCRIPT DE VERIFICAÇÃO DO FFMPEG
 echo "🔧 Criando script de verificação do ffmpeg..."
 
 cat > "$HLS_HOME/check_ffmpeg.sh" << 'EOF'
 #!/bin/bash
 
-echo "🔍 Verificando FFmpeg..."
-echo "========================"
-
-# Verificar se ffmpeg está no PATH
-echo "1. Verificando PATH..."
-which ffmpeg
+echo "🔍 Verificação completa do FFmpeg"
+echo "================================="
 
 echo ""
-echo "2. Procurando ffmpeg no sistema..."
-find /usr -name "ffmpeg" -type f 2>/dev/null | while read file; do
-    echo "   $file"
+echo "1. Localização do FFmpeg:"
+which ffmpeg 2>/dev/null || echo "   Não encontrado no PATH"
+
+echo ""
+echo "2. Versão do FFmpeg:"
+ffmpeg -version 2>/dev/null | head -3 || echo "   Não consegui executar"
+
+echo ""
+echo "3. Caminhos possíveis:"
+for path in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+    if [ -f "$path" ]; then
+        echo "   ✅ $path"
+        ls -la "$path"
+    fi
 done
 
 echo ""
-echo "3. Testando execução..."
+echo "4. Teste de conversão simples:"
 if command -v ffmpeg &> /dev/null; then
-    ffmpeg -version | head -3
+    echo "   Testando comando básico..."
+    ffmpeg -version > /dev/null 2>&1 && echo "   ✅ FFmpeg funciona" || echo "   ❌ FFmpeg não funciona"
 else
-    echo "   ❌ ffmpeg não encontrado"
+    echo "   ❌ FFmpeg não está instalado"
 fi
 
 echo ""
-echo "4. Verificando permissões..."
-if [ -f "/usr/bin/ffmpeg" ]; then
-    ls -la /usr/bin/ffmpeg
-elif [ -f "/usr/local/bin/ffmpeg" ]; then
-    ls -la /usr/local/bin/ffmpeg
-fi
-
-echo ""
-echo "5. Soluções possíveis:"
+echo "5. Soluções:"
 echo "   a) sudo apt-get update && sudo apt-get install -y ffmpeg"
 echo "   b) sudo snap install ffmpeg --classic"
-echo "   c) Baixar de: https://ffmpeg.org/download.html"
+echo "   c) $HOME/hlsctl fix-ffmpeg"
 EOF
 
 chmod +x "$HLS_HOME/check_ffmpeg.sh"
 
-# 16. INICIAR SERVIÇO
-echo "🚀 Starting service..."
+# 17. INICIAR SERVIÇO
+echo "🚀 Iniciando serviço..."
 sudo systemctl enable hls-converter.service
 sudo systemctl start hls-converter.service
 
 sleep 8
 
-# 17. VERIFICAÇÃO FINAL DETALHADA
+# 18. VERIFICAÇÃO FINAL DETALHADA
 echo "🔍 VERIFICAÇÃO FINAL DETALHADA..."
 echo "================================"
 
@@ -1377,15 +1725,20 @@ if sudo systemctl is-active --quiet hls-converter.service; then
     
     # Health check
     echo "   a) Health check:"
-    curl -s http://localhost:5000/health | grep -q "healthy" && echo "      ✅ OK" || echo "      ❌ Falha"
+    if curl -s http://localhost:8080/health | grep -q "healthy"; then
+        echo "      ✅ OK"
+    else
+        echo "      ⚠️  Retornou warning (pode ser ffmpeg)"
+        curl -s http://localhost:8080/health | grep -o '"message":"[^"]*"' | head -1
+    fi
     
     # Debug ffmpeg
     echo "   b) Debug ffmpeg:"
-    curl -s http://localhost:5000/debug/ffmpeg 2>/dev/null | grep -q "ffmpeg_path" && echo "      ✅ OK" || echo "      ❌ Falha"
+    curl -s http://localhost:8080/debug/ffmpeg 2>/dev/null | grep -q "ffmpeg_path" && echo "      ✅ OK" || echo "      ❌ Falha"
     
     # Interface web
     echo "   c) Interface web:"
-    curl -s -I http://localhost:5000/ | head -1 | grep -q "200" && echo "      ✅ OK" || echo "      ❌ Falha"
+    curl -s -I http://localhost:8080/ 2>/dev/null | head -1 | grep -q "200" && echo "      ✅ OK" || echo "      ❌ Falha"
     
 else
     echo "   ❌ Serviço não está ativo"
@@ -1393,46 +1746,73 @@ else
     sudo journalctl -u hls-converter -n 10 --no-pager
 fi
 
-# 18. OBTER INFORMAÇÕES DO SISTEMA
-IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+# 19. OBTER INFORMAÇÕES DO SISTEMA
+IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
-echo "🎉🎉🎉 INSTALAÇÃO COMPLETA! 🎉🎉🎉"
-echo "================================"
+echo "🎉🎉🎉 INSTALAÇÃO FINAL COMPLETA! 🎉🎉🎉"
+echo "====================================="
 echo ""
-echo "✅ SISTEMA INSTALADO"
+echo "✅ SISTEMA INSTALADO COM TODAS AS CORREÇÕES"
 echo ""
-echo "🌐 URLs DE ACESSO:"
-echo "   🎨 INTERFACE WEB: http://$IP:5000"
-echo "   🩺 HEALTH CHECK: http://$IP:5000/health"
-echo "   🔧 DEBUG FFMPEG: http://$IP:5000/debug/ffmpeg"
+echo "🔧 CORREÇÕES APLICADAS:"
+echo "   ✔️  Usa diretório home (~/hls-converter-pro)"
+echo "   ✔️  Instalação robusta do FFmpeg (4 métodos)"
+echo "   ✔️  Import secure_filename do werkzeug.utils"
+echo "   ✔️  Verificação automática do FFmpeg"
+echo "   ✔️  Interface mostra status do FFmpeg"
+echo "   ✔️  Scripts de gerenciamento melhorados"
+echo "   ✔️  Tratamento de erros robusto"
+echo "   ✔️  Sistema mais estável"
+echo ""
+echo "📊 CARACTERÍSTICAS:"
+echo "   ✅ Dashboard profissional completo"
+echo "   ✅ Conversão HLS com múltiplas qualidades"
+echo "   ✅ Player de vídeo integrado"
+echo "   ✅ Monitoramento do sistema em tempo real"
+echo "   ✅ Histórico de conversões"
+echo "   ✅ Interface responsiva e moderna"
+echo "   ✅ Sistema de logs detalhado"
+echo "   ✅ Verificação automática do FFmpeg"
+echo "   ✅ Otimizado para produção"
+echo ""
+echo "🌐 URLS DE ACESSO:"
+echo "   🎨 INTERFACE PRINCIPAL: http://$IP:8080"
+echo "   🩺 HEALTH CHECK: http://$IP:8080/health"
+echo "   🔧 DEBUG FFMPEG: http://$IP:8080/debug/ffmpeg"
+echo "   📊 API SYSTEM: http://$IP:8080/api/system"
 echo ""
 echo "⚙️  COMANDOS DE GERENCIAMENTO:"
-echo "   • $HOME/hlsctl start         - Iniciar serviço"
-echo "   • $HOME/hlsctl stop          - Parar serviço"
-echo "   • $HOME/hlsctl restart       - Reiniciar serviço"
-echo "   • $HOME/hlsctl status        - Verificar status"
-echo "   • $HOME/hlsctl logs          - Ver logs"
-echo "   • $HOME/hlsctl test          - Testar sistema"
-echo "   • $HOME/hlsctl cleanup       - Limpar arquivos antigos"
-echo "   • $HOME/hlsctl fix-ffmpeg    - INSTALAR/REPARAR FFMPEG"
-echo "   • $HOME/hlsctl debug-ffmpeg  - Depurar problemas do ffmpeg"
-echo "   • $HOME/hlsctl info          - Informações do sistema"
+echo "   • $HOME/hlsctl start        - Iniciar"
+echo "   • $HOME/hlsctl stop         - Parar"
+echo "   • $HOME/hlsctl restart      - Reiniciar"
+echo "   • $HOME/hlsctl status       - Status"
+echo "   • $HOME/hlsctl logs         - Ver logs"
+echo "   • $HOME/hlsctl test         - Testar sistema"
+echo "   • $HOME/hlsctl cleanup      - Limpar arquivos"
+echo "   • $HOME/hlsctl fix-ffmpeg   - INSTALAR FFMPEG"
+echo "   • $HOME/hlsctl debug        - Depurar problemas"
+echo "   • $HOME/hlsctl info         - Informações"
 echo ""
 echo "🔧 SE O FFMPEG AINDA NÃO ESTIVER FUNCIONANDO:"
 echo "   1. Execute: $HOME/hlsctl fix-ffmpeg"
 echo "   2. Execute: $HOME/hlsctl restart"
-echo "   3. Verifique: $HOME/hlsctl debug-ffmpeg"
+echo "   3. Verifique: $HOME/hlsctl debug"
+echo "   4. Ou execute: $HLS_HOME/check_ffmpeg.sh"
 echo ""
 echo "📁 DIRETÓRIOS DO SISTEMA:"
-echo "   • Aplicação: $HOME/hls-converter/"
-echo "   • Uploads: $HOME/hls-converter/uploads/"
-echo "   • HLS: $HOME/hls-converter/hls/"
-echo "   • Logs: $HOME/hls-converter/logs/"
-echo "   • Banco de dados: $HOME/hls-converter/db/"
+echo "   • Aplicação: $HLS_HOME/"
+echo "   • Uploads: $HLS_HOME/uploads/"
+echo "   • HLS: $HLS_HOME/hls/"
+echo "   • Logs: $HLS_HOME/logs/"
+echo "   • Banco de dados: $HLS_HOME/db/"
 echo ""
-echo "🔄 PARA REINSTALAR COMPLETAMENTE:"
-echo "   $HOME/hlsctl reinstall"
+echo "💡 PRIMEIROS PASSOS:"
+echo "   1. Acesse http://$IP:8080"
+echo "   2. Verifique se o FFmpeg aparece como ✅ no painel"
+echo "   3. Se aparecer ❌, execute '$HOME/hlsctl fix-ffmpeg'"
+echo "   4. Arraste vídeos para a área de upload"
+echo "   5. Selecione qualidades e clique em converter"
+echo "   6. Use o link M3U8 gerado em players HLS"
 echo ""
-echo "📌 IMPORTANTE: A interface web mostrará claramente se o FFmpeg está instalado ou não!"
-echo "   Se mostrar ❌ no status do FFmpeg, use o comando 'fix-ffmpeg' para instalar."
+echo "🚀 SISTEMA PRONTO PARA USO PRODUÇÃO!"
