@@ -1,14 +1,57 @@
 #!/bin/bash
-# install_hls_converter_home_final.sh - Versão com correção do ffmpeg
+# install_hls_converter_robust.sh - Versão robusta com instalação garantida do ffmpeg
 
 set -e
 
-echo "🚀 INSTALANDO HLS CONVERTER - HOME DIRECTORY VERSION"
-echo "=================================================="
+echo "🚀 INSTALANDO HLS CONVERTER - VERSÃO ROBUSTA"
+echo "==========================================="
 
 # 1. Definir diretório base (home do usuário)
 HLS_HOME="$HOME/hls-converter"
 echo "📁 Diretório base: $HLS_HOME"
+
+# Função para instalar ffmpeg robustamente
+install_ffmpeg_robust() {
+    echo "🔧 Tentando instalar ffmpeg..."
+    
+    # Método 1: Tentar instalação normal
+    echo "📦 Método 1: Instalação normal do apt..."
+    sudo apt-get update
+    if sudo apt-get install -y ffmpeg; then
+        echo "✅ FFmpeg instalado com sucesso via apt"
+        return 0
+    fi
+    
+    # Método 2: Tentar instalar individualmente
+    echo "📦 Método 2: Instalando componentes individualmente..."
+    sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
+        libswscale-dev libswresample-dev libpostproc-dev || true
+    
+    # Método 3: Tentar instalar do repositório Snap
+    echo "📦 Método 3: Tentando via Snap..."
+    if command -v snap &> /dev/null; then
+        sudo snap install ffmpeg --classic && echo "✅ FFmpeg instalado via Snap" && return 0
+    fi
+    
+    # Método 4: Compilar do código fonte (último recurso)
+    echo "📦 Método 4: Baixando binário estático..."
+    cd /tmp
+    wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz || \
+    wget -q https://www.johnvansickle.com/ffmpeg/old-releases/ffmpeg-4.4.1-amd64-static.tar.xz || \
+    curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+    
+    if [ -f ffmpeg-release-amd64-static.tar.xz ]; then
+        tar -xf ffmpeg-release-amd64-static.tar.xz
+        FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d | head -1)
+        if [ -n "$FFMPEG_DIR" ]; then
+            sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/
+            echo "✅ FFmpeg instalado de binário estático"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
 
 # 2. Verificar sistema
 echo "🔍 Verificando sistema..."
@@ -30,28 +73,46 @@ rm -rf "$HLS_HOME" 2>/dev/null || true
 sudo rm -f /etc/systemd/system/hls-*.service 2>/dev/null || true
 sudo systemctl daemon-reload
 
-# 5. Atualizar sistema e instalar ffmpeg primeiro
-echo "📦 Atualizando sistema e instalando ffmpeg..."
-sudo apt-get update
-sudo apt-get upgrade -y
+# 5. INSTALAR FFMPEG PRIMEIRO (MUITO IMPORTANTE)
+echo "🎬 INSTALANDO FFMPEG (ETAPA CRÍTICA)..."
 
-echo "🔧 Verificando e instalando ffmpeg..."
 # Verificar se ffmpeg já está instalado
-if ! command -v ffmpeg &> /dev/null; then
-    echo "📥 Instalando ffmpeg..."
-    sudo apt-get install -y ffmpeg
-    echo "✅ ffmpeg instalado"
-else
+if command -v ffmpeg &> /dev/null; then
     echo "✅ ffmpeg já está instalado"
+    echo "🔍 Versão do ffmpeg:"
+    ffmpeg -version | head -1
+else
+    echo "❌ ffmpeg não encontrado, instalando..."
+    install_ffmpeg_robust
+    
+    # Verificar novamente
+    if ! command -v ffmpeg &> /dev/null; then
+        echo "⚠️  Tentando encontrar ffmpeg em locais alternativos..."
+        # Procurar ffmpeg em vários locais possíveis
+        for path in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+            if [ -f "$path" ]; then
+                sudo ln -sf "$path" /usr/local/bin/ffmpeg
+                echo "✅ Link simbólico criado para $path"
+                break
+            fi
+        done
+    fi
+    
+    # Verificação final
+    if command -v ffmpeg &> /dev/null; then
+        echo "🎉 FFMPEG INSTALADO COM SUCESSO!"
+        ffmpeg -version | head -1
+    else
+        echo "⚠️  AVISO: Não foi possível instalar o ffmpeg automaticamente"
+        echo "📋 Você precisará instalá-lo manualmente depois:"
+        echo "   sudo apt-get update && sudo apt-get install -y ffmpeg"
+    fi
 fi
-
-# Verificar versão do ffmpeg
-echo "🔍 Versão do ffmpeg:"
-ffmpeg -version | head -1
 
 # 6. Instalar outras dependências
 echo "🔧 Instalando outras dependências..."
-sudo apt-get install -y python3 python3-pip python3-venv curl
+sudo apt-get update
+sudo apt-get install -y python3 python3-pip python3-venv curl wget
 
 # 7. Criar estrutura
 echo "🏗️  Criando estrutura de diretórios..."
@@ -68,8 +129,8 @@ echo "📦 Instalando dependências Python..."
 pip install --upgrade pip
 pip install flask werkzeug psutil
 
-# 9. CRIAR APLICAÇÃO FLASK SIMPLES E FUNCIONAL
-echo "💻 Criando aplicação simples e funcional..."
+# 9. CRIAR APLICAÇÃO FLASK COM VERIFICAÇÃO ROBUSTA DO FFMPEG
+echo "💻 Criando aplicação robusta..."
 
 cat > app.py << 'EOF'
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory
@@ -81,6 +142,7 @@ import time
 import psutil
 from datetime import datetime
 import shutil
+import sys
 
 app = Flask(__name__)
 
@@ -117,16 +179,49 @@ def log_activity(message, level="INFO"):
     with open(log_file, 'a') as f:
         f.write(f"[{timestamp}] [{level}] {message}\n")
 
-# Verificar se ffmpeg está disponível
-def check_ffmpeg():
+# Função ROBUSTA para encontrar ffmpeg
+def find_ffmpeg():
+    """Encontra ffmpeg em vários locais possíveis"""
+    possible_paths = [
+        '/usr/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+        '/bin/ffmpeg',
+        '/snap/bin/ffmpeg',
+        '/opt/homebrew/bin/ffmpeg',
+        os.path.expanduser('~/.local/bin/ffmpeg'),
+        '/usr/lib/ffmpeg',
+    ]
+    
+    # Também verificar no PATH
     try:
         result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
         if result.returncode == 0:
-            return True, result.stdout.strip()
-        else:
-            return False, "ffmpeg não encontrado"
-    except Exception as e:
-        return False, str(e)
+            return result.stdout.strip()
+    except:
+        pass
+    
+    # Verificar em cada caminho possível
+    for path in possible_paths:
+        if os.path.exists(path) and os.access(path, os.X_OK):
+            return path
+    
+    # Tentar encontrar via find
+    try:
+        result = subprocess.run(['find', '/usr', '-name', 'ffmpeg', '-type', 'f', '-executable'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.split('\n')[0]
+    except:
+        pass
+    
+    return None
+
+# Verificar ffmpeg uma vez e armazenar o caminho
+FFMPEG_PATH = find_ffmpeg()
+if FFMPEG_PATH:
+    log_activity(f"FFmpeg encontrado em: {FFMPEG_PATH}")
+else:
+    log_activity("FFmpeg NÃO encontrado no sistema!", "ERROR")
 
 # HTML SIMPLES E FUNCIONAL
 HTML = '''
@@ -268,6 +363,14 @@ HTML = '''
             margin-bottom: 20px;
             border: 1px solid #f5c6cb;
         }
+        .warning-box {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ffeaa7;
+        }
     </style>
 </head>
 <body>
@@ -275,7 +378,7 @@ HTML = '''
         <h1>🎬 HLS Video Converter</h1>
         
         <!-- System Status -->
-        <div id="systemStatus" style="display: none;"></div>
+        <div id="systemStatus"></div>
         
         <!-- System Stats -->
         <div class="stats">
@@ -293,7 +396,7 @@ HTML = '''
             </div>
             <div class="stat-card">
                 <div class="stat-number" id="ffmpegStatus">❓</div>
-                <div>FFmpeg</div>
+                <div>FFmpeg Status</div>
             </div>
         </div>
         
@@ -340,6 +443,57 @@ HTML = '''
     <script>
         let selectedFiles = [];
         let selectedQualities = ['240p', '480p', '720p'];
+        let ffmpegAvailable = false;
+        
+        // Check ffmpeg status on load
+        async function checkFFmpegOnLoad() {
+            try {
+                const response = await fetch('/api/system');
+                const data = await response.json();
+                
+                const ffmpegStatus = document.getElementById('ffmpegStatus');
+                const systemStatus = document.getElementById('systemStatus');
+                const convertBtn = document.getElementById('convertBtn');
+                
+                if (data.ffmpeg_status === 'ok') {
+                    ffmpegStatus.innerHTML = '✅';
+                    ffmpegStatus.title = 'FFmpeg está disponível: ' + (data.ffmpeg_path || '');
+                    ffmpegAvailable = true;
+                    
+                    // Hide any warning
+                    systemStatus.innerHTML = '';
+                    systemStatus.style.display = 'none';
+                    convertBtn.disabled = false;
+                } else {
+                    ffmpegStatus.innerHTML = '❌';
+                    ffmpegStatus.title = 'FFmpeg não encontrado';
+                    ffmpegAvailable = false;
+                    
+                    // Show warning
+                    systemStatus.innerHTML = `
+                        <div class="warning-box">
+                            <strong>⚠️ AVISO IMPORTANTE:</strong> FFmpeg não está instalado!
+                            <br>O conversor de vídeo não funcionará sem o FFmpeg.
+                            <br><br>
+                            <strong>Para instalar manualmente:</strong>
+                            <br><code>sudo apt-get update && sudo apt-get install -y ffmpeg</code>
+                            <br><br>
+                            <strong>Ou use o comando:</strong>
+                            <br><code>$HOME/hlsctl fix-ffmpeg</code>
+                            <br><br>
+                            <button onclick="location.reload()" style="background:#dc3545;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;">
+                                🔄 Recarregar após instalar
+                            </button>
+                        </div>
+                    `;
+                    systemStatus.style.display = 'block';
+                    convertBtn.disabled = true;
+                    convertBtn.innerHTML = '⛔ FFmpeg não instalado';
+                }
+            } catch (error) {
+                console.error('Error checking ffmpeg:', error);
+            }
+        }
         
         // Handle file selection
         function handleFiles(files) {
@@ -396,6 +550,11 @@ HTML = '''
         
         // Start conversion
         async function startConversion() {
+            if (!ffmpegAvailable) {
+                alert('FFmpeg não está instalado. Por favor, instale-o primeiro.');
+                return;
+            }
+            
             if (selectedFiles.length === 0) {
                 alert('Please select files first!');
                 return;
@@ -542,25 +701,6 @@ HTML = '''
                 document.getElementById('memoryUsage').textContent = data.memory || '--';
                 document.getElementById('conversionCount').textContent = data.total_conversions || '0';
                 
-                // Update ffmpeg status
-                if (data.ffmpeg_status === 'ok') {
-                    document.getElementById('ffmpegStatus').innerHTML = '✅';
-                    document.getElementById('ffmpegStatus').title = 'FFmpeg está disponível';
-                } else {
-                    document.getElementById('ffmpegStatus').innerHTML = '❌';
-                    document.getElementById('ffmpegStatus').title = 'FFmpeg não encontrado';
-                    
-                    // Show error if ffmpeg is not available
-                    const statusDiv = document.getElementById('systemStatus');
-                    statusDiv.innerHTML = `
-                        <div class="error-box">
-                            <strong>⚠️ AVISO:</strong> FFmpeg não está instalado corretamente!
-                            <br>Por favor, execute: <code>sudo apt-get install ffmpeg</code>
-                        </div>
-                    `;
-                    statusDiv.style.display = 'block';
-                }
-                
             } catch (error) {
                 console.error('Error updating stats:', error);
             }
@@ -568,7 +708,10 @@ HTML = '''
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
-            updateSystemStats();
+            // Check ffmpeg first
+            checkFFmpegOnLoad();
+            
+            // Update other stats periodically
             setInterval(updateSystemStats, 30000);
             
             // Handle drag and drop
@@ -658,9 +801,12 @@ def index():
 def convert_video():
     try:
         # Verificar ffmpeg primeiro
-        ffmpeg_available, ffmpeg_path = check_ffmpeg()
-        if not ffmpeg_available:
-            return jsonify({'success': False, 'error': 'FFmpeg não está instalado. Por favor, execute: sudo apt-get install ffmpeg'})
+        if not FFMPEG_PATH:
+            return jsonify({
+                'success': False, 
+                'error': 'FFmpeg não está instalado no sistema. '
+                        'Por favor, execute: sudo apt-get update && sudo apt-get install -y ffmpeg'
+            })
         
         # Check if files were uploaded
         if 'files' not in request.files:
@@ -689,6 +835,17 @@ def convert_video():
         file.save(original_path)
         
         log_activity(f"Starting conversion: {filename} -> {video_id}")
+        log_activity(f"Using ffmpeg from: {FFMPEG_PATH}")
+        
+        # Test ffmpeg command first
+        try:
+            test_result = subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, text=True, timeout=10)
+            if test_result.returncode != 0:
+                log_activity(f"FFmpeg test failed: {test_result.stderr[:100]}", "ERROR")
+                return jsonify({'success': False, 'error': f'FFmpeg não está funcionando: {test_result.stderr[:100]}'})
+        except Exception as e:
+            log_activity(f"FFmpeg test exception: {str(e)}", "ERROR")
+            return jsonify({'success': False, 'error': f'Erro ao executar ffmpeg: {str(e)}'})
         
         # Create master playlist
         master_playlist = os.path.join(output_dir, "master.m3u8")
@@ -733,9 +890,9 @@ def convert_video():
                 # Create playlist file for this quality
                 playlist_file = os.path.join(quality_dir, "index.m3u8")
                 
-                # Build FFmpeg command with absolute path
+                # Build FFmpeg command
                 cmd = [
-                    ffmpeg_path, '-i', original_path,
+                    FFMPEG_PATH, '-i', original_path,
                     '-vf', f'scale={scale}',
                     '-c:v', 'libx264',
                     '-preset', 'fast',
@@ -749,7 +906,7 @@ def convert_video():
                 ]
                 
                 # Log the command
-                log_activity(f"Running command: {' '.join(cmd)}")
+                log_activity(f"Running command: {' '.join(cmd[:3])} ...")
                 
                 # Run conversion
                 try:
@@ -807,7 +964,7 @@ def api_system():
         memory = psutil.virtual_memory()
         
         # Verificar ffmpeg
-        ffmpeg_available, ffmpeg_path = check_ffmpeg()
+        ffmpeg_status = "ok" if FFMPEG_PATH else "missing"
         
         db = load_database()
         
@@ -817,8 +974,8 @@ def api_system():
             "total_conversions": db["stats"]["total"],
             "success_conversions": db["stats"]["success"],
             "failed_conversions": db["stats"]["failed"],
-            "ffmpeg_status": "ok" if ffmpeg_available else "missing",
-            "ffmpeg_path": ffmpeg_path if ffmpeg_available else "not found",
+            "ffmpeg_status": ffmpeg_status,
+            "ffmpeg_path": FFMPEG_PATH or "not found",
             "uptime": str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split('.')[0]
         })
     except Exception as e:
@@ -848,32 +1005,69 @@ def serve_hls(filename):
 @app.route('/health')
 def health_check():
     """Health check do sistema"""
-    ffmpeg_available, ffmpeg_path = check_ffmpeg()
+    status = "healthy" if FFMPEG_PATH else "warning"
     
     return jsonify({
-        "status": "healthy" if ffmpeg_available else "warning",
+        "status": status,
         "service": "hls-converter",
         "version": "1.0.0",
-        "ffmpeg": ffmpeg_available,
-        "ffmpeg_path": ffmpeg_path,
-        "timestamp": datetime.now().isoformat()
+        "ffmpeg": FFMPEG_PATH is not None,
+        "ffmpeg_path": FFMPEG_PATH or "not found",
+        "timestamp": datetime.now().isoformat(),
+        "message": "FFmpeg instalado" if FFMPEG_PATH else "FFmpeg não encontrado - instale com: sudo apt-get install ffmpeg"
     })
 
+@app.route('/debug/ffmpeg')
+def debug_ffmpeg():
+    """Página de debug do ffmpeg"""
+    debug_info = {
+        "ffmpeg_path": FFMPEG_PATH,
+        "path_env": os.environ.get('PATH', ''),
+        "which_output": subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout,
+        "find_output": subprocess.run(['find', '/usr', '-name', 'ffmpeg', '-type', 'f', '-executable'], 
+                                     capture_output=True, text=True, timeout=5).stdout[:500],
+    }
+    
+    # Testar execução do ffmpeg
+    if FFMPEG_PATH:
+        try:
+            test = subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, text=True, timeout=5)
+            debug_info['ffmpeg_test'] = {
+                'returncode': test.returncode,
+                'stdout': test.stdout[:200],
+                'stderr': test.stderr[:200]
+            }
+        except Exception as e:
+            debug_info['ffmpeg_test_error'] = str(e)
+    
+    return jsonify(debug_info)
+
 if __name__ == '__main__':
-    # Verificar ffmpeg na inicialização
-    ffmpeg_available, ffmpeg_path = check_ffmpeg()
+    print("🎬 HLS Converter v1.0 - ROBUST VERSION")
+    print("======================================")
     
-    print("🎬 HLS Converter v1.0")
-    print("======================")
-    
-    if ffmpeg_available:
-        print(f"✅ FFmpeg encontrado em: {ffmpeg_path}")
+    if FFMPEG_PATH:
+        print(f"✅ FFmpeg encontrado em: {FFMPEG_PATH}")
+        # Testar ffmpeg
+        try:
+            result = subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, text=True)
+            if result.returncode == 0:
+                version_line = result.stdout.split('\n')[0]
+                print(f"📊 Versão: {version_line}")
+            else:
+                print("⚠️  FFmpeg encontrado mas não funciona corretamente")
+        except Exception as e:
+            print(f"⚠️  Erro ao testar ffmpeg: {e}")
     else:
         print("❌ FFmpeg NÃO encontrado!")
-        print("   Por favor, instale com: sudo apt-get install ffmpeg")
+        print("📋 Métodos para instalar:")
+        print("   1. sudo apt-get update && sudo apt-get install -y ffmpeg")
+        print("   2. sudo snap install ffmpeg --classic")
+        print("   3. Baixar binário estático de: https://johnvansickle.com/ffmpeg/")
     
     print("🌐 Starting on port 5000")
     print("✅ Health check: http://localhost:5000/health")
+    print("🔧 Debug ffmpeg: http://localhost:5000/debug/ffmpeg")
     print("🎮 Interface: http://localhost:5000/")
     print("")
     
@@ -893,7 +1087,7 @@ cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 }
 EOF
 
-# 11. CRIAR SERVIÇO SYSTEMD (agora como usuário)
+# 11. CRIAR SERVIÇO SYSTEMD
 echo "⚙️ Configurando serviço systemd..."
 
 cat > "$HLS_HOME/hls-converter.service" << EOF
@@ -905,10 +1099,12 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$HLS_HOME
-Environment=PATH=$HLS_HOME/venv/bin
+Environment=PATH=$HLS_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$HLS_HOME/venv/bin/python3 $HLS_HOME/app.py
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -927,11 +1123,13 @@ chmod 644 "$HLS_HOME/db"/*.json
 chmod -R 755 "$HLS_HOME/uploads"
 chmod -R 755 "$HLS_HOME/hls"
 
-# 14. CRIAR SCRIPT DE GERENCIAMENTO SIMPLES
-echo "📝 Criando script de gerenciamento..."
+# 14. CRIAR SCRIPT DE GERENCIAMENTO AVANÇADO
+echo "📝 Criando script de gerenciamento avançado..."
 
 cat > "$HOME/hlsctl" << 'EOF'
 #!/bin/bash
+
+HLS_HOME="$HOME/hls-converter"
 
 case "$1" in
     start)
@@ -958,7 +1156,7 @@ case "$1" in
         ;;
     test)
         echo "🧪 Testing system..."
-        curl -s http://localhost:5000/health
+        curl -s http://localhost:5000/health | python3 -m json.tool
         echo ""
         ;;
     cleanup)
@@ -968,133 +1166,273 @@ case "$1" in
         echo "✅ Old files removed"
         ;;
     fix-ffmpeg)
-        echo "🔧 Installing ffmpeg..."
+        echo "🔧 Installing ffmpeg with multiple methods..."
+        
+        # Method 1: Standard apt
+        echo "📦 Method 1: Standard apt install..."
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        echo "✅ FFmpeg installed"
+        
+        # Check if successful
+        if command -v ffmpeg &> /dev/null; then
+            echo "✅ FFmpeg installed successfully"
+            ffmpeg -version | head -1
+        else
+            # Method 2: Snap
+            echo "📦 Method 2: Trying Snap..."
+            if command -v snap &> /dev/null; then
+                sudo snap install ffmpeg --classic
+            fi
+            
+            # Method 3: Download static binary
+            if ! command -v ffmpeg &> /dev/null; then
+                echo "📦 Method 3: Downloading static binary..."
+                cd /tmp
+                wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz || \
+                curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+                
+                if [ -f ffmpeg-release-amd64-static.tar.xz ]; then
+                    tar -xf ffmpeg-release-amd64-static.tar.xz
+                    FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d | head -1)
+                    if [ -n "$FFMPEG_DIR" ]; then
+                        sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/
+                        sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+                        echo "✅ FFmpeg installed from static binary"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Final check
+        if command -v ffmpeg &> /dev/null; then
+            echo "🎉 FFMPEG INSTALLED SUCCESSFULLY!"
+            echo "🔍 Location: $(which ffmpeg)"
+            echo "📊 Version:"
+            ffmpeg -version | head -1
+            echo ""
+            echo "🔄 Please restart the service:"
+            echo "   hlsctl restart"
+        else
+            echo "❌ Could not install FFmpeg automatically"
+            echo "📋 Please install it manually:"
+            echo "   1. sudo apt-get update && sudo apt-get install -y ffmpeg"
+            echo "   2. Or download from: https://ffmpeg.org/download.html"
+        fi
+        ;;
+    debug-ffmpeg)
+        echo "🔍 Debugging ffmpeg..."
+        echo "1. Checking if ffmpeg exists in PATH..."
+        which ffmpeg || echo "   Not found in PATH"
+        
+        echo ""
+        echo "2. Searching for ffmpeg in system..."
+        find /usr -name "ffmpeg" -type f 2>/dev/null | head -5
+        
+        echo ""
+        echo "3. Checking via application debug endpoint..."
+        curl -s http://localhost:5000/debug/ffmpeg 2>/dev/null | python3 -m json.tool || \
+        echo "   Application not running"
+        
+        echo ""
+        echo "4. Testing ffmpeg execution..."
+        if command -v ffmpeg &> /dev/null; then
+            ffmpeg -version | head -1
+        else
+            echo "   ffmpeg command not found"
+        fi
+        ;;
+    reinstall)
+        echo "🔄 Reinstalling HLS Converter..."
+        sudo systemctl stop hls-converter 2>/dev/null || true
+        rm -rf "$HLS_HOME"
+        echo "✅ Removed old installation"
+        echo "📋 Please run the installer again"
         ;;
     info)
         IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
         echo "=== HLS Converter ==="
         echo "Port: 5000"
         echo "URL: http://$IP:5000"
-        echo "Directory: $HOME/hls-converter"
+        echo "Directory: $HLS_HOME"
         echo "FFmpeg: $(command -v ffmpeg 2>/dev/null || echo 'Not installed')"
+        
+        if command -v ffmpeg &> /dev/null; then
+            echo "FFmpeg Version: $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
+        fi
+        
         echo ""
-        echo "Commands:"
-        echo "  hlsctl start        - Start service"
-        echo "  hlsctl stop         - Stop service"
-        echo "  hlsctl restart      - Restart service"
-        echo "  hlsctl status       - Check status"
-        echo "  hlsctl logs         - View logs"
-        echo "  hlsctl test         - Test system"
-        echo "  hlsctl cleanup      - Clean old files"
-        echo "  hlsctl fix-ffmpeg   - Install/repair ffmpeg"
+        echo "📊 Service Status:"
+        sudo systemctl is-active hls-converter &> /dev/null && echo "   Status: ✅ Running" || echo "   Status: ❌ Stopped"
+        
+        echo ""
+        echo "⚙️ Available Commands:"
+        echo "  hlsctl start         - Start service"
+        echo "  hlsctl stop          - Stop service"
+        echo "  hlsctl restart       - Restart service"
+        echo "  hlsctl status        - Check status"
+        echo "  hlsctl logs          - View logs"
+        echo "  hlsctl test          - Test system"
+        echo "  hlsctl cleanup       - Clean old files"
+        echo "  hlsctl fix-ffmpeg    - Install/repair ffmpeg"
+        echo "  hlsctl debug-ffmpeg  - Debug ffmpeg issues"
+        echo "  hlsctl reinstall     - Reinstall system"
+        echo "  hlsctl info          - System information"
         ;;
     *)
         echo "Usage: hlsctl [command]"
         echo ""
         echo "Commands:"
-        echo "  start        - Start service"
-        echo "  stop         - Stop service"
-        echo "  restart      - Restart service"
-        echo "  status       - Check status"
-        echo "  logs         - View logs"
-        echo "  test         - Test system"
-        echo "  cleanup      - Clean old files"
-        echo "  fix-ffmpeg   - Install/repair ffmpeg"
-        echo "  info         - System information"
+        echo "  start         - Start service"
+        echo "  stop          - Stop service"
+        echo "  restart       - Restart service"
+        echo "  status        - Check status"
+        echo "  logs          - View logs"
+        echo "  test          - Test system"
+        echo "  cleanup       - Clean old files"
+        echo "  fix-ffmpeg    - Install/repair ffmpeg"
+        echo "  debug-ffmpeg  - Debug ffmpeg issues"
+        echo "  reinstall     - Reinstall system"
+        echo "  info          - System information"
         ;;
 esac
 EOF
 
 chmod +x "$HOME/hlsctl"
 
-# 15. INICIAR SERVIÇO
+# 15. CRIAR SCRIPT DE VERIFICAÇÃO DO FFMPEG
+echo "🔧 Criando script de verificação do ffmpeg..."
+
+cat > "$HLS_HOME/check_ffmpeg.sh" << 'EOF'
+#!/bin/bash
+
+echo "🔍 Verificando FFmpeg..."
+echo "========================"
+
+# Verificar se ffmpeg está no PATH
+echo "1. Verificando PATH..."
+which ffmpeg
+
+echo ""
+echo "2. Procurando ffmpeg no sistema..."
+find /usr -name "ffmpeg" -type f 2>/dev/null | while read file; do
+    echo "   $file"
+done
+
+echo ""
+echo "3. Testando execução..."
+if command -v ffmpeg &> /dev/null; then
+    ffmpeg -version | head -3
+else
+    echo "   ❌ ffmpeg não encontrado"
+fi
+
+echo ""
+echo "4. Verificando permissões..."
+if [ -f "/usr/bin/ffmpeg" ]; then
+    ls -la /usr/bin/ffmpeg
+elif [ -f "/usr/local/bin/ffmpeg" ]; then
+    ls -la /usr/local/bin/ffmpeg
+fi
+
+echo ""
+echo "5. Soluções possíveis:"
+echo "   a) sudo apt-get update && sudo apt-get install -y ffmpeg"
+echo "   b) sudo snap install ffmpeg --classic"
+echo "   c) Baixar de: https://ffmpeg.org/download.html"
+EOF
+
+chmod +x "$HLS_HOME/check_ffmpeg.sh"
+
+# 16. INICIAR SERVIÇO
 echo "🚀 Starting service..."
 sudo systemctl enable hls-converter.service
 sudo systemctl start hls-converter.service
 
-sleep 5
+sleep 8
 
-# 16. VERIFICAR INSTALAÇÃO
-echo "🔍 Verifying installation..."
+# 17. VERIFICAÇÃO FINAL DETALHADA
+echo "🔍 VERIFICAÇÃO FINAL DETALHADA..."
+echo "================================"
 
-# Verificar ffmpeg novamente
-echo "🔍 Verificando ffmpeg..."
+# Verificar ffmpeg
+echo ""
+echo "1. Verificando FFmpeg:"
 if command -v ffmpeg &> /dev/null; then
-    echo "✅ ffmpeg está instalado"
+    echo "   ✅ FFmpeg encontrado: $(which ffmpeg)"
     ffmpeg -version | head -1
 else
-    echo "❌ ffmpeg NÃO está instalado!"
-    echo "📋 Tentando instalar novamente..."
-    sudo apt-get install -y ffmpeg
+    echo "   ❌ FFmpeg NÃO encontrado!"
+    echo "   📋 Execute: $HOME/hlsctl fix-ffmpeg"
 fi
 
+# Verificar serviço
+echo ""
+echo "2. Verificando serviço:"
 if sudo systemctl is-active --quiet hls-converter.service; then
-    echo "✅ Service is active!"
+    echo "   ✅ Serviço está ativo"
     
-    echo "Testing application..."
-    sleep 3
-    
-    if curl -s http://localhost:5000/health | grep -q "healthy"; then
-        echo "✅✅✅ SYSTEM WORKING PERFECTLY!"
-        
-        echo "Testing web interface..."
-        curl -s -I http://localhost:5000/ | head -1 | grep -q "200" && echo "✅ Web interface OK"
-        
-    else
-        echo "⚠️ Health check not responding"
-        echo "Checking logs..."
-        sudo journalctl -u hls-converter -n 10 --no-pager
-    fi
-else
-    echo "❌ Service failed to start"
-    echo "📋 ERROR LOGS:"
-    sudo journalctl -u hls-converter -n 20 --no-pager
+    # Testar endpoints
     echo ""
-    echo "🔄 Trying manual start..."
-    cd "$HLS_HOME"
-    ./venv/bin/python3 app.py &
-    sleep 5
-    curl -s http://localhost:5000/health && echo "✅ Works manually!"
+    echo "3. Testando endpoints:"
+    
+    # Health check
+    echo "   a) Health check:"
+    curl -s http://localhost:5000/health | grep -q "healthy" && echo "      ✅ OK" || echo "      ❌ Falha"
+    
+    # Debug ffmpeg
+    echo "   b) Debug ffmpeg:"
+    curl -s http://localhost:5000/debug/ffmpeg 2>/dev/null | grep -q "ffmpeg_path" && echo "      ✅ OK" || echo "      ❌ Falha"
+    
+    # Interface web
+    echo "   c) Interface web:"
+    curl -s -I http://localhost:5000/ | head -1 | grep -q "200" && echo "      ✅ OK" || echo "      ❌ Falha"
+    
+else
+    echo "   ❌ Serviço não está ativo"
+    echo "   📋 Logs:"
+    sudo journalctl -u hls-converter -n 10 --no-pager
 fi
 
-# 17. OBTER INFORMAÇÕES DO SISTEMA
+# 18. OBTER INFORMAÇÕES DO SISTEMA
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
-echo "🎉🎉🎉 INSTALLATION COMPLETE! 🎉🎉🎉"
-echo "=================================="
+echo "🎉🎉🎉 INSTALAÇÃO COMPLETA! 🎉🎉🎉"
+echo "================================"
 echo ""
-echo "✅ SYSTEM INSTALLED SUCCESSFULLY"
+echo "✅ SISTEMA INSTALADO"
 echo ""
-echo "🌐 ACCESS URLS:"
-echo "   🎨 WEB INTERFACE: http://$IP:5000"
+echo "🌐 URLs DE ACESSO:"
+echo "   🎨 INTERFACE WEB: http://$IP:5000"
 echo "   🩺 HEALTH CHECK: http://$IP:5000/health"
+echo "   🔧 DEBUG FFMPEG: http://$IP:5000/debug/ffmpeg"
 echo ""
-echo "⚙️  MANAGEMENT COMMANDS:"
-echo "   • $HOME/hlsctl start        - Start service"
-echo "   • $HOME/hlsctl stop         - Stop service"
-echo "   • $HOME/hlsctl restart      - Restart service"
-echo "   • $HOME/hlsctl status       - Check status"
-echo "   • $HOME/hlsctl logs         - View logs"
-echo "   • $HOME/hlsctl test         - Test system"
-echo "   • $HOME/hlsctl cleanup      - Clean old files"
-echo "   • $HOME/hlsctl fix-ffmpeg   - Install ffmpeg (se necessário)"
+echo "⚙️  COMANDOS DE GERENCIAMENTO:"
+echo "   • $HOME/hlsctl start         - Iniciar serviço"
+echo "   • $HOME/hlsctl stop          - Parar serviço"
+echo "   • $HOME/hlsctl restart       - Reiniciar serviço"
+echo "   • $HOME/hlsctl status        - Verificar status"
+echo "   • $HOME/hlsctl logs          - Ver logs"
+echo "   • $HOME/hlsctl test          - Testar sistema"
+echo "   • $HOME/hlsctl cleanup       - Limpar arquivos antigos"
+echo "   • $HOME/hlsctl fix-ffmpeg    - INSTALAR/REPARAR FFMPEG"
+echo "   • $HOME/hlsctl debug-ffmpeg  - Depurar problemas do ffmpeg"
+echo "   • $HOME/hlsctl info          - Informações do sistema"
 echo ""
-echo "📁 SYSTEM DIRECTORIES:"
-echo "   • Application: $HOME/hls-converter/"
+echo "🔧 SE O FFMPEG AINDA NÃO ESTIVER FUNCIONANDO:"
+echo "   1. Execute: $HOME/hlsctl fix-ffmpeg"
+echo "   2. Execute: $HOME/hlsctl restart"
+echo "   3. Verifique: $HOME/hlsctl debug-ffmpeg"
+echo ""
+echo "📁 DIRETÓRIOS DO SISTEMA:"
+echo "   • Aplicação: $HOME/hls-converter/"
 echo "   • Uploads: $HOME/hls-converter/uploads/"
 echo "   • HLS: $HOME/hls-converter/hls/"
 echo "   • Logs: $HOME/hls-converter/logs/"
-echo "   • Database: $HOME/hls-converter/db/"
+echo "   • Banco de dados: $HOME/hls-converter/db/"
 echo ""
-echo "🔧 SE FFMPEG AINDA FALTAR:"
-echo "   Execute: sudo apt-get update && sudo apt-get install -y ffmpeg"
-echo "   Ou use: $HOME/hlsctl fix-ffmpeg"
+echo "🔄 PARA REINSTALAR COMPLETAMENTE:"
+echo "   $HOME/hlsctl reinstall"
 echo ""
-echo "🔄 Quick start:"
-echo "   cd $HOME/hls-converter"
-echo "   source venv/bin/activate"
-echo "   python3 app.py"
+echo "📌 IMPORTANTE: A interface web mostrará claramente se o FFmpeg está instalado ou não!"
+echo "   Se mostrar ❌ no status do FFmpeg, use o comando 'fix-ffmpeg' para instalar."
