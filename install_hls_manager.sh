@@ -54,6 +54,7 @@ sudo usermod -a -G hlsweb $(whoami) 2>/dev/null || true
 # 6. INSTALAR DEPENDÊNCIAS MÍNIMAS
 echo "📦 Instalando dependências..."
 sudo apt-get update
+sudo apt-get upgrade -y
 sudo apt-get install -y python3 python3-pip python3-venv
 
 # 7. CRIAR APLICAÇÃO FLASK SIMPLIFICADA (sem Gunicorn/SocketIO problemáticos)
