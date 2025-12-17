@@ -1,5 +1,5 @@
 #!/bin/bash
-# install_hls_converter_final.sh - Versão corrigida para home directory
+# install_hls_converter_home_final.sh - Versão com correção do ffmpeg
 
 set -e
 
@@ -30,33 +30,45 @@ rm -rf "$HLS_HOME" 2>/dev/null || true
 sudo rm -f /etc/systemd/system/hls-*.service 2>/dev/null || true
 sudo systemctl daemon-reload
 
-# 5. Atualizar sistema
-echo "📦 Atualizando sistema..."
+# 5. Atualizar sistema e instalar ffmpeg primeiro
+echo "📦 Atualizando sistema e instalando ffmpeg..."
 sudo apt-get update
 sudo apt-get upgrade -y
 
-# 6. Instalar dependências
-echo "🔧 Instalando dependências..."
-sudo apt-get install -y python3 python3-pip python3-venv ffmpeg curl
+echo "🔧 Verificando e instalando ffmpeg..."
+# Verificar se ffmpeg já está instalado
+if ! command -v ffmpeg &> /dev/null; then
+    echo "📥 Instalando ffmpeg..."
+    sudo apt-get install -y ffmpeg
+    echo "✅ ffmpeg instalado"
+else
+    echo "✅ ffmpeg já está instalado"
+fi
+
+# Verificar versão do ffmpeg
+echo "🔍 Versão do ffmpeg:"
+ffmpeg -version | head -1
+
+# 6. Instalar outras dependências
+echo "🔧 Instalando outras dependências..."
+sudo apt-get install -y python3 python3-pip python3-venv curl
 
 # 7. Criar estrutura
 echo "🏗️  Criando estrutura de diretórios..."
 mkdir -p "$HLS_HOME"/{uploads,hls,logs,db}
 cd "$HLS_HOME"
 
-# 8. Criar usuário (opcional, agora usando usuário atual)
-echo "👤 Usando usuário atual: $USER"
-
-# 9. Configurar ambiente Python
+# 8. Configurar ambiente Python
 echo "🐍 Configurando ambiente Python..."
 python3 -m venv venv
 source venv/bin/activate
 
 # Instalar dependências Python
+echo "📦 Instalando dependências Python..."
 pip install --upgrade pip
 pip install flask werkzeug psutil
 
-# 10. CRIAR APLICAÇÃO FLASK SIMPLES E FUNCIONAL
+# 9. CRIAR APLICAÇÃO FLASK SIMPLES E FUNCIONAL
 echo "💻 Criando aplicação simples e funcional..."
 
 cat > app.py << 'EOF'
@@ -104,6 +116,17 @@ def log_activity(message, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, 'a') as f:
         f.write(f"[{timestamp}] [{level}] {message}\n")
+
+# Verificar se ffmpeg está disponível
+def check_ffmpeg():
+    try:
+        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return True, result.stdout.strip()
+        else:
+            return False, "ffmpeg não encontrado"
+    except Exception as e:
+        return False, str(e)
 
 # HTML SIMPLES E FUNCIONAL
 HTML = '''
@@ -237,11 +260,22 @@ HTML = '''
             font-weight: bold;
             color: #4361ee;
         }
+        .error-box {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🎬 HLS Video Converter</h1>
+        
+        <!-- System Status -->
+        <div id="systemStatus" style="display: none;"></div>
         
         <!-- System Stats -->
         <div class="stats">
@@ -258,8 +292,8 @@ HTML = '''
                 <div>Conversions</div>
             </div>
             <div class="stat-card">
-                <div class="stat-number" id="uptime">--</div>
-                <div>Uptime</div>
+                <div class="stat-number" id="ffmpegStatus">❓</div>
+                <div>FFmpeg</div>
             </div>
         </div>
         
@@ -507,7 +541,26 @@ HTML = '''
                 document.getElementById('cpuUsage').textContent = data.cpu || '--';
                 document.getElementById('memoryUsage').textContent = data.memory || '--';
                 document.getElementById('conversionCount').textContent = data.total_conversions || '0';
-                document.getElementById('uptime').textContent = data.uptime || '--';
+                
+                // Update ffmpeg status
+                if (data.ffmpeg_status === 'ok') {
+                    document.getElementById('ffmpegStatus').innerHTML = '✅';
+                    document.getElementById('ffmpegStatus').title = 'FFmpeg está disponível';
+                } else {
+                    document.getElementById('ffmpegStatus').innerHTML = '❌';
+                    document.getElementById('ffmpegStatus').title = 'FFmpeg não encontrado';
+                    
+                    // Show error if ffmpeg is not available
+                    const statusDiv = document.getElementById('systemStatus');
+                    statusDiv.innerHTML = `
+                        <div class="error-box">
+                            <strong>⚠️ AVISO:</strong> FFmpeg não está instalado corretamente!
+                            <br>Por favor, execute: <code>sudo apt-get install ffmpeg</code>
+                        </div>
+                    `;
+                    statusDiv.style.display = 'block';
+                }
+                
             } catch (error) {
                 console.error('Error updating stats:', error);
             }
@@ -604,6 +657,11 @@ def index():
 @app.route('/convert', methods=['POST'])
 def convert_video():
     try:
+        # Verificar ffmpeg primeiro
+        ffmpeg_available, ffmpeg_path = check_ffmpeg()
+        if not ffmpeg_available:
+            return jsonify({'success': False, 'error': 'FFmpeg não está instalado. Por favor, execute: sudo apt-get install ffmpeg'})
+        
         # Check if files were uploaded
         if 'files' not in request.files:
             return jsonify({'success': False, 'error': 'No files uploaded'})
@@ -675,9 +733,9 @@ def convert_video():
                 # Create playlist file for this quality
                 playlist_file = os.path.join(quality_dir, "index.m3u8")
                 
-                # Build FFmpeg command
+                # Build FFmpeg command with absolute path
                 cmd = [
-                    'ffmpeg', '-i', original_path,
+                    ffmpeg_path, '-i', original_path,
                     '-vf', f'scale={scale}',
                     '-c:v', 'libx264',
                     '-preset', 'fast',
@@ -690,6 +748,9 @@ def convert_video():
                     '-f', 'hls', playlist_file
                 ]
                 
+                # Log the command
+                log_activity(f"Running command: {' '.join(cmd)}")
+                
                 # Run conversion
                 try:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -698,9 +759,11 @@ def convert_video():
                         f.write(f'{quality}/index.m3u8\n')
                         log_activity(f"Quality {quality} converted successfully")
                     else:
-                        log_activity(f"Error converting {quality}: {result.stderr[:100]}", "ERROR")
+                        log_activity(f"Error converting {quality}: {result.stderr[:200]}", "ERROR")
                 except subprocess.TimeoutExpired:
                     log_activity(f"Timeout converting {quality}", "ERROR")
+                except Exception as e:
+                    log_activity(f"Exception converting {quality}: {str(e)}", "ERROR")
         
         # Clean up original file
         try:
@@ -743,6 +806,9 @@ def api_system():
         cpu_percent = psutil.cpu_percent(interval=0.1)
         memory = psutil.virtual_memory()
         
+        # Verificar ffmpeg
+        ffmpeg_available, ffmpeg_path = check_ffmpeg()
+        
         db = load_database()
         
         return jsonify({
@@ -751,6 +817,8 @@ def api_system():
             "total_conversions": db["stats"]["total"],
             "success_conversions": db["stats"]["success"],
             "failed_conversions": db["stats"]["failed"],
+            "ffmpeg_status": "ok" if ffmpeg_available else "missing",
+            "ffmpeg_path": ffmpeg_path if ffmpeg_available else "not found",
             "uptime": str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split('.')[0]
         })
     except Exception as e:
@@ -780,16 +848,30 @@ def serve_hls(filename):
 @app.route('/health')
 def health_check():
     """Health check do sistema"""
+    ffmpeg_available, ffmpeg_path = check_ffmpeg()
+    
     return jsonify({
-        "status": "healthy",
+        "status": "healthy" if ffmpeg_available else "warning",
         "service": "hls-converter",
         "version": "1.0.0",
+        "ffmpeg": ffmpeg_available,
+        "ffmpeg_path": ffmpeg_path,
         "timestamp": datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
+    # Verificar ffmpeg na inicialização
+    ffmpeg_available, ffmpeg_path = check_ffmpeg()
+    
     print("🎬 HLS Converter v1.0")
     print("======================")
+    
+    if ffmpeg_available:
+        print(f"✅ FFmpeg encontrado em: {ffmpeg_path}")
+    else:
+        print("❌ FFmpeg NÃO encontrado!")
+        print("   Por favor, instale com: sudo apt-get install ffmpeg")
+    
     print("🌐 Starting on port 5000")
     print("✅ Health check: http://localhost:5000/health")
     print("🎮 Interface: http://localhost:5000/")
@@ -798,7 +880,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
 EOF
 
-# 11. CRIAR BANCO DE DADOS INICIAL
+# 10. CRIAR BANCO DE DADOS INICIAL
 echo "💾 Criando banco de dados inicial..."
 cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 {
@@ -811,7 +893,7 @@ cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 }
 EOF
 
-# 12. CRIAR SERVIÇO SYSTEMD (agora como usuário)
+# 11. CRIAR SERVIÇO SYSTEMD (agora como usuário)
 echo "⚙️ Configurando serviço systemd..."
 
 cat > "$HLS_HOME/hls-converter.service" << EOF
@@ -832,12 +914,12 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 13. INSTALAR O SERVIÇO
+# 12. INSTALAR O SERVIÇO
 echo "📦 Instalando serviço systemd..."
 sudo cp "$HLS_HOME/hls-converter.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 14. CONFIGURAR PERMISSÕES
+# 13. CONFIGURAR PERMISSÕES
 echo "🔐 Configurando permissões..."
 chmod 755 "$HLS_HOME"
 chmod 644 "$HLS_HOME"/*.py
@@ -845,7 +927,7 @@ chmod 644 "$HLS_HOME/db"/*.json
 chmod -R 755 "$HLS_HOME/uploads"
 chmod -R 755 "$HLS_HOME/hls"
 
-# 15. CRIAR SCRIPT DE GERENCIAMENTO SIMPLES
+# 14. CRIAR SCRIPT DE GERENCIAMENTO SIMPLES
 echo "📝 Criando script de gerenciamento..."
 
 cat > "$HOME/hlsctl" << 'EOF'
@@ -885,49 +967,69 @@ case "$1" in
         find "$HOME/hls-converter/hls" -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
         echo "✅ Old files removed"
         ;;
+    fix-ffmpeg)
+        echo "🔧 Installing ffmpeg..."
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+        echo "✅ FFmpeg installed"
+        ;;
     info)
         IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
         echo "=== HLS Converter ==="
         echo "Port: 5000"
         echo "URL: http://$IP:5000"
         echo "Directory: $HOME/hls-converter"
+        echo "FFmpeg: $(command -v ffmpeg 2>/dev/null || echo 'Not installed')"
         echo ""
         echo "Commands:"
-        echo "  hlsctl start     - Start service"
-        echo "  hlsctl stop      - Stop service"
-        echo "  hlsctl restart   - Restart service"
-        echo "  hlsctl status    - Check status"
-        echo "  hlsctl logs      - View logs"
-        echo "  hlsctl test      - Test system"
-        echo "  hlsctl cleanup   - Clean old files"
+        echo "  hlsctl start        - Start service"
+        echo "  hlsctl stop         - Stop service"
+        echo "  hlsctl restart      - Restart service"
+        echo "  hlsctl status       - Check status"
+        echo "  hlsctl logs         - View logs"
+        echo "  hlsctl test         - Test system"
+        echo "  hlsctl cleanup      - Clean old files"
+        echo "  hlsctl fix-ffmpeg   - Install/repair ffmpeg"
         ;;
     *)
         echo "Usage: hlsctl [command]"
         echo ""
         echo "Commands:"
-        echo "  start     - Start service"
-        echo "  stop      - Stop service"
-        echo "  restart   - Restart service"
-        echo "  status    - Check status"
-        echo "  logs      - View logs"
-        echo "  test      - Test system"
-        echo "  cleanup   - Clean old files"
-        echo "  info      - System information"
+        echo "  start        - Start service"
+        echo "  stop         - Stop service"
+        echo "  restart      - Restart service"
+        echo "  status       - Check status"
+        echo "  logs         - View logs"
+        echo "  test         - Test system"
+        echo "  cleanup      - Clean old files"
+        echo "  fix-ffmpeg   - Install/repair ffmpeg"
+        echo "  info         - System information"
         ;;
 esac
 EOF
 
 chmod +x "$HOME/hlsctl"
 
-# 16. INICIAR SERVIÇO
+# 15. INICIAR SERVIÇO
 echo "🚀 Starting service..."
 sudo systemctl enable hls-converter.service
 sudo systemctl start hls-converter.service
 
 sleep 5
 
-# 17. VERIFICAR INSTALAÇÃO
+# 16. VERIFICAR INSTALAÇÃO
 echo "🔍 Verifying installation..."
+
+# Verificar ffmpeg novamente
+echo "🔍 Verificando ffmpeg..."
+if command -v ffmpeg &> /dev/null; then
+    echo "✅ ffmpeg está instalado"
+    ffmpeg -version | head -1
+else
+    echo "❌ ffmpeg NÃO está instalado!"
+    echo "📋 Tentando instalar novamente..."
+    sudo apt-get install -y ffmpeg
+fi
 
 if sudo systemctl is-active --quiet hls-converter.service; then
     echo "✅ Service is active!"
@@ -958,7 +1060,7 @@ else
     curl -s http://localhost:5000/health && echo "✅ Works manually!"
 fi
 
-# 18. OBTER INFORMAÇÕES DO SISTEMA
+# 17. OBTER INFORMAÇÕES DO SISTEMA
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
@@ -972,13 +1074,14 @@ echo "   🎨 WEB INTERFACE: http://$IP:5000"
 echo "   🩺 HEALTH CHECK: http://$IP:5000/health"
 echo ""
 echo "⚙️  MANAGEMENT COMMANDS:"
-echo "   • $HOME/hlsctl start      - Start service"
-echo "   • $HOME/hlsctl stop       - Stop service"
-echo "   • $HOME/hlsctl restart    - Restart service"
-echo "   • $HOME/hlsctl status     - Check status"
-echo "   • $HOME/hlsctl logs       - View logs"
-echo "   • $HOME/hlsctl test       - Test system"
-echo "   • $HOME/hlsctl cleanup    - Clean old files"
+echo "   • $HOME/hlsctl start        - Start service"
+echo "   • $HOME/hlsctl stop         - Stop service"
+echo "   • $HOME/hlsctl restart      - Restart service"
+echo "   • $HOME/hlsctl status       - Check status"
+echo "   • $HOME/hlsctl logs         - View logs"
+echo "   • $HOME/hlsctl test         - Test system"
+echo "   • $HOME/hlsctl cleanup      - Clean old files"
+echo "   • $HOME/hlsctl fix-ffmpeg   - Install ffmpeg (se necessário)"
 echo ""
 echo "📁 SYSTEM DIRECTORIES:"
 echo "   • Application: $HOME/hls-converter/"
@@ -987,9 +1090,11 @@ echo "   • HLS: $HOME/hls-converter/hls/"
 echo "   • Logs: $HOME/hls-converter/logs/"
 echo "   • Database: $HOME/hls-converter/db/"
 echo ""
+echo "🔧 SE FFMPEG AINDA FALTAR:"
+echo "   Execute: sudo apt-get update && sudo apt-get install -y ffmpeg"
+echo "   Ou use: $HOME/hlsctl fix-ffmpeg"
+echo ""
 echo "🔄 Quick start:"
 echo "   cd $HOME/hls-converter"
 echo "   source venv/bin/activate"
 echo "   python3 app.py"
-echo ""
-echo "📌 Note: All files are in your home directory with proper permissions!"
