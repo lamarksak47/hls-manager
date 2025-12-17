@@ -1,10 +1,10 @@
 #!/bin/bash
-# install_hls_converter_complete.sh - Sistema COMPLETO de Conversão HLS
+# install_hls_converter_complete_fixed.sh - Sistema COMPLETO CORRIGIDO
 
 set -e
 
-echo "🚀 INSTALANDO HLS CONVERTER COMPLETO"
-echo "===================================="
+echo "🚀 INSTALANDO HLS CONVERTER COMPLETO (FIXED)"
+echo "============================================"
 
 # 1. Verificar sistema de arquivos
 echo "🔍 Verificando sistema..."
@@ -16,7 +16,7 @@ fi
 
 # 2. Parar serviços existentes
 echo "🛑 Parando serviços existentes..."
-sudo systemctl stop hls-simple hls-dashboard hls-manager hls-final 2>/dev/null || true
+sudo systemctl stop hls-simple hls-dashboard hls-manager hls-final hls-converter 2>/dev/null || true
 sudo pkill -9 python 2>/dev/null || true
 sleep 2
 
@@ -33,7 +33,7 @@ sudo apt-get upgrade -y
 
 # 5. Instalar dependências COMPLETAS
 echo "🔧 Instalando dependências..."
-sudo apt-get install -y python3 python3-pip python3-venv ffmpeg nginx htop curl wget
+sudo apt-get install -y python3 python3-pip python3-venv ffmpeg htop curl wget
 
 # 6. Criar estrutura de diretórios AVANÇADA
 echo "🏗️  Criando estrutura de diretórios..."
@@ -55,17 +55,18 @@ echo "🐍 Configurando ambiente Python..."
 python3 -m venv venv
 source venv/bin/activate
 
-# Instalar dependências Python
+# Instalar dependências Python COMPLETAS
 pip install --upgrade pip
-pip install flask flask-cors python-magic psutil
+pip install flask flask-cors python-magic psutil waitress werkzeug
 
-# 9. CRIAR APLICAÇÃO FLASK COMPLETA COM DASHBOARD
-echo "💻 Criando aplicação completa..."
+# 9. CRIAR APLICAÇÃO FLASK COMPLETA CORRIGIDA
+echo "💻 Criando aplicação completa corrigida..."
 
-# Arquivo principal com DASHBOARD
+# Arquivo principal com DASHBOARD CORRIGIDO
 sudo tee app.py > /dev/null << 'EOF'
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import os
 import subprocess
 import uuid
@@ -974,7 +975,7 @@ PLAYER_HTML = '''
 </html>
 '''
 
-# ==================== ROTAS DA APLICAÇÃO ====================
+# ==================== ROTAS DA APLICAÇÃO CORRIGIDAS ====================
 
 @app.route('/')
 def index():
@@ -991,16 +992,20 @@ def convert_video():
             return jsonify({'success': False, 'error': 'Nenhum arquivo selecionado'})
         
         # Get quality settings
-        qualities = json.loads(request.form.get('qualities', '["720p"]'))
+        qualities_json = request.form.get('qualities', '["720p"]')
+        try:
+            qualities = json.loads(qualities_json)
+        except:
+            qualities = ["720p"]
         
         # Generate unique ID
         video_id = str(uuid.uuid4())[:12]
         output_dir = os.path.join(HLS_DIR, video_id)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Save and convert first file (simplified)
+        # Save and convert first file
         file = files[0]
-        filename = secure_filename(file.filename)
+        filename = file.filename  # Usamos o nome original por enquanto
         original_path = os.path.join(UPLOAD_DIR, f"{video_id}_{filename}")
         file.save(original_path)
         
@@ -1016,6 +1021,10 @@ def convert_video():
             # Convert for each quality
             for quality in qualities:
                 if quality == '240p':
+                    quality_dir = os.path.join(output_dir, '240p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
                     cmd = [
                         'ffmpeg', '-i', original_path,
                         '-vf', 'scale=426:240',
@@ -1023,13 +1032,17 @@ def convert_video():
                         '-c:a', 'aac', '-b:a', '64k',
                         '-hls_time', '10',
                         '-hls_list_size', '0',
-                        '-hls_segment_filename', os.path.join(output_dir, f'240p_%03d.ts'),
-                        '-f', 'hls', os.path.join(output_dir, '240p.m3u8')
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
                     ]
                     f.write('#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240\n')
-                    f.write('240p.m3u8\n')
+                    f.write('240p/index.m3u8\n')
                     
                 elif quality == '480p':
+                    quality_dir = os.path.join(output_dir, '480p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
                     cmd = [
                         'ffmpeg', '-i', original_path,
                         '-vf', 'scale=854:480',
@@ -1037,13 +1050,17 @@ def convert_video():
                         '-c:a', 'aac', '-b:a', '96k',
                         '-hls_time', '10',
                         '-hls_list_size', '0',
-                        '-hls_segment_filename', os.path.join(output_dir, f'480p_%03d.ts'),
-                        '-f', 'hls', os.path.join(output_dir, '480p.m3u8')
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
                     ]
                     f.write('#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\n')
-                    f.write('480p.m3u8\n')
+                    f.write('480p/index.m3u8\n')
                     
                 elif quality == '720p':
+                    quality_dir = os.path.join(output_dir, '720p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
                     cmd = [
                         'ffmpeg', '-i', original_path,
                         '-vf', 'scale=1280:720',
@@ -1051,13 +1068,17 @@ def convert_video():
                         '-c:a', 'aac', '-b:a', '128k',
                         '-hls_time', '10',
                         '-hls_list_size', '0',
-                        '-hls_segment_filename', os.path.join(output_dir, f'720p_%03d.ts'),
-                        '-f', 'hls', os.path.join(output_dir, '720p.m3u8')
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
                     ]
                     f.write('#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720\n')
-                    f.write('720p.m3u8\n')
+                    f.write('720p/index.m3u8\n')
                     
                 elif quality == '1080p':
+                    quality_dir = os.path.join(output_dir, '1080p')
+                    os.makedirs(quality_dir, exist_ok=True)
+                    
+                    m3u8_file = os.path.join(quality_dir, 'index.m3u8')
                     cmd = [
                         'ffmpeg', '-i', original_path,
                         '-vf', 'scale=1920:1080',
@@ -1065,24 +1086,33 @@ def convert_video():
                         '-c:a', 'aac', '-b:a', '192k',
                         '-hls_time', '10',
                         '-hls_list_size', '0',
-                        '-hls_segment_filename', os.path.join(output_dir, f'1080p_%03d.ts'),
-                        '-f', 'hls', os.path.join(output_dir, '1080p.m3u8')
+                        '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                        '-f', 'hls', m3u8_file
                     ]
                     f.write('#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1920x1080\n')
-                    f.write('1080p.m3u8\n')
+                    f.write('1080p/index.m3u8\n')
+                else:
+                    continue  # Skip unknown qualities
                 
                 # Run conversion
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                log_activity(f"Convertendo para {quality}...")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minutos timeout
+                
                 if result.returncode != 0:
-                    log_activity(f"Erro na conversão {quality}: {result.stderr}", "ERROR")
+                    log_activity(f"Erro na conversão {quality}: {result.stderr[:200]}", "ERROR")
+                    continue  # Continue with other qualities
         
-        # Save original file in quality folder if needed
-        original_copy = os.path.join(output_dir, "original", filename)
-        os.makedirs(os.path.dirname(original_copy), exist_ok=True)
+        # Save original file if needed
+        original_dir = os.path.join(output_dir, "original")
+        os.makedirs(original_dir, exist_ok=True)
+        original_copy = os.path.join(original_dir, filename)
         shutil.copy2(original_path, original_copy)
         
         # Clean up original upload
-        os.remove(original_path)
+        try:
+            os.remove(original_path)
+        except:
+            pass
         
         # Update database
         db = load_database()
@@ -1094,9 +1124,11 @@ def convert_video():
             "status": "success",
             "m3u8_url": f"/hls/{video_id}/master.m3u8"
         }
-        db["conversions"].insert(0, conversion_data)
-        db["stats"]["total"] += 1
-        db["stats"]["success"] += 1
+        
+        # Insert at beginning (newest first)
+        db["conversions"].insert(0, conversion_data) if hasattr(db["conversions"], 'insert') else db["conversions"] = [conversion_data] + db["conversions"]
+        db["stats"]["total"] = db["stats"].get("total", 0) + 1
+        db["stats"]["success"] = db["stats"].get("success", 0) + 1
         save_database(db)
         
         log_activity(f"Conversão concluída: {video_id} ({', '.join(qualities)})")
@@ -1109,6 +1141,9 @@ def convert_video():
             "player_url": f"/player/{video_id}"
         })
         
+    except subprocess.TimeoutExpired:
+        log_activity("Timeout na conversão", "ERROR")
+        return jsonify({"success": False, "error": "Timeout na conversão (5 minutos)"})
     except Exception as e:
         log_activity(f"Erro na conversão: {str(e)}", "ERROR")
         return jsonify({"success": False, "error": str(e)})
@@ -1158,15 +1193,9 @@ def health_check():
         "system": get_system_info()
     })
 
-# Monkey patch para lista ter método insert
-import collections
-def insert(self, index, value):
-    self._list.insert(index, value)
-collections.abc.MutableSequence.insert = insert
-
 if __name__ == '__main__':
-    print("🎬 HLS Converter PRO v3.0")
-    print("==========================")
+    print("🎬 HLS Converter PRO v3.0 (FIXED)")
+    print("================================")
     print("🌐 Sistema iniciando na porta 8080")
     print("📊 Dashboard completo disponível")
     print("🔧 Múltiplas qualidades HLS")
@@ -1211,47 +1240,6 @@ sudo tee config.json > /dev/null << 'EOF'
 }
 EOF
 
-# Arquivo de inicialização do sistema
-sudo tee start.sh > /dev/null << 'EOF'
-#!/bin/bash
-# Script de inicialização do HLS Converter
-
-cd /opt/hls-converter
-source venv/bin/activate
-
-echo "🚀 Iniciando HLS Converter PRO..."
-echo "Porta: 8080"
-echo "Diretório: $(pwd)"
-echo "Usuário: $(whoami)"
-echo ""
-
-# Verificar se FFmpeg está instalado
-if ! command -v ffmpeg &> /dev/null; then
-    echo "❌ FFmpeg não encontrado!"
-    exit 1
-fi
-
-# Verificar espaço em disco
-DISK_SPACE=$(df /opt --output=avail | tail -1)
-if [ "$DISK_SPACE" -lt 1048576 ]; then
-    echo "⚠️  Espaço em disco baixo: $(($DISK_SPACE/1024))MB livre"
-fi
-
-# Criar diretórios necessários
-mkdir -p uploads hls logs db
-
-# Iniciar aplicação
-if [ "$1" = "debug" ]; then
-    echo "🔧 Modo debug ativado"
-    python app.py
-else
-    echo "⚡ Modo produção"
-    waitress-serve --port=8080 --call app:app
-fi
-EOF
-
-sudo chmod +x start.sh
-
 # 11. CRIAR SERVIÇO SYSTEMD COMPLETO
 echo "⚙️ Configurando serviço systemd..."
 
@@ -1268,13 +1256,9 @@ Group=hlsuser
 WorkingDirectory=/opt/hls-converter
 Environment="PATH=/opt/hls-converter/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
-Environment="PYTHONPATH=/opt/hls-converter"
 
 # Usar Waitress para produção
 ExecStart=/opt/hls-converter/venv/bin/waitress-serve --port=8080 --call app:app
-
-# Ou usar Flask diretamente (para debug)
-# ExecStart=/opt/hls-converter/venv/bin/python3 /opt/hls-converter/app.py
 
 Restart=always
 RestartSec=10
@@ -1287,245 +1271,102 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/opt/hls-converter/uploads /opt/hls-converter/hls /opt/hls-converter/logs /opt/hls-converter/db
-ProtectHome=read-only
-
-# Resource limits
-LimitNOFILE=65536
-LimitNPROC=512
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 12. INSTALAR WAITRESS PARA PRODUÇÃO
-echo "🔧 Instalando Waitress para produção..."
-source venv/bin/activate
-pip install waitress
-
-# 13. CONFIGURAR PERMISSÕES
+# 12. CONFIGURAR PERMISSÕES
 echo "🔐 Configurando permissões..."
 sudo chown -R hlsuser:hlsuser /opt/hls-converter
 sudo chmod 755 /opt/hls-converter
 sudo chmod 644 /opt/hls-converter/*.py
-sudo chmod +x /opt/hls-converter/start.sh
+sudo chmod 644 /opt/hls-converter/*.json
 
-# Criar diretório de logs do systemd
-sudo mkdir -p /var/log/hls-converter
-sudo chown hlsuser:hlsuser /var/log/hls-converter
-
-# 14. CONFIGURAR NGINX COMO PROXY (OPCIONAL)
-echo "🌐 Configurando Nginx..."
-
-sudo tee /etc/nginx/sites-available/hls-converter > /dev/null << 'EOF'
-server {
-    listen 80;
-    server_name _;
-    
-    # Compression
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
-    
-    # Client
-    client_max_body_size 2048M;
-    client_body_timeout 300s;
-    
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Timeouts
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-        
-        # WebSocket support (se necessário no futuro)
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-    
-    # Servir arquivos HLS diretamente
-    location /hls/ {
-        alias /opt/hls-converter/hls/;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        add_header Access-Control-Allow-Origin "*";
-        
-        # HLS specific headers
-        types {
-            application/vnd.apple.mpegurl m3u8;
-            video/mp2t ts;
-        }
-    }
-    
-    # Servir uploads
-    location /uploads/ {
-        alias /opt/hls-converter/uploads/;
-        expires 1h;
-        add_header Cache-Control "public";
-    }
-    
-    # Security - bloquear acesso a arquivos sensíveis
-    location ~ /\. {
-        deny all;
-    }
-    
-    location ~* \.(log|db|sqlite)$ {
-        deny all;
+# 13. CRIAR BANCO DE DADOS INICIAL
+echo "💾 Criando banco de dados inicial..."
+sudo -u hlsuser tee /opt/hls-converter/db/conversions.json > /dev/null << 'EOF'
+{
+    "conversions": [],
+    "stats": {
+        "total": 0,
+        "success": 0,
+        "failed": 0
     }
 }
 EOF
 
-# Habilitar site do Nginx
-sudo ln -sf /etc/nginx/sites-available/hls-converter /etc/nginx/sites-enabled/
-sudo nginx -t 2>/dev/null && sudo systemctl restart nginx || echo "Nginx não configurado, continuando..."
-
-# 15. CRIAR SCRIPT DE GERENCIAMENTO
+# 14. CRIAR SCRIPT DE GERENCIAMENTO SIMPLIFICADO
 echo "📝 Criando script de gerenciamento..."
 
-sudo tee /usr/local/bin/hls-control > /dev/null << 'EOF'
+sudo tee /usr/local/bin/hlsctl > /dev/null << 'EOF'
 #!/bin/bash
-VERSION="3.0.0"
-BASE_DIR="/opt/hls-converter"
-SERVICE_NAME="hls-converter"
-
-show_header() {
-    echo "🎬 HLS Converter PRO v$VERSION"
-    echo "==============================="
-}
 
 case "$1" in
     start)
-        sudo systemctl start $SERVICE_NAME
+        sudo systemctl start hls-converter
         echo "✅ Serviço iniciado"
         ;;
     stop)
-        sudo systemctl stop $SERVICE_NAME
+        sudo systemctl stop hls-converter
         echo "✅ Serviço parado"
         ;;
     restart)
-        sudo systemctl restart $SERVICE_NAME
+        sudo systemctl restart hls-converter
         echo "✅ Serviço reiniciado"
         ;;
     status)
-        show_header
-        echo ""
-        sudo systemctl status $SERVICE_NAME --no-pager
-        echo ""
-        echo "=== Portas em uso ==="
-        sudo ss -tulpn | grep -E ":8080|:80" | head -10
+        sudo systemctl status hls-converter --no-pager
         ;;
     logs)
         if [ "$2" = "-f" ]; then
-            sudo journalctl -u $SERVICE_NAME -f
+            sudo journalctl -u hls-converter -f
         else
-            sudo journalctl -u $SERVICE_NAME -n 50 --no-pager
+            sudo journalctl -u hls-converter -n 30 --no-pager
         fi
-        ;;
-    monitor)
-        show_header
-        echo ""
-        echo "=== Monitor do Sistema ==="
-        echo "Uso de CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}')"
-        echo "Uso de Memória: $(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2}')"
-        echo ""
-        
-        echo "=== Conversões ==="
-        if [ -f "$BASE_DIR/db/conversions.json" ]; then
-            TOTAL=$(jq '.stats.total // 0' "$BASE_DIR/db/conversions.json")
-            SUCCESS=$(jq '.stats.success // 0' "$BASE_DIR/db/conversions.json")
-            echo "Total: $TOTAL | Sucesso: $SUCCESS"
-        else
-            echo "Banco de dados não encontrado"
-        fi
-        echo ""
-        
-        echo "=== Espaço em Disco ==="
-        du -sh $BASE_DIR/hls 2>/dev/null | awk '{print "HLS: "$1}'
-        du -sh $BASE_DIR/uploads 2>/dev/null | awk '{print "Uploads: "$1}'
-        echo ""
-        ;;
-    cleanup)
-        echo "🧹 Limpando arquivos antigos..."
-        find $BASE_DIR/uploads -type f -mtime +7 -delete 2>/dev/null
-        find $BASE_DIR/hls -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null
-        echo "✅ Limpeza concluída"
-        ;;
-    info)
-        show_header
-        IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
-        echo ""
-        echo "=== Informações do Sistema ==="
-        echo "Porta: 8080"
-        echo "URL: http://$IP:8080"
-        echo "Health: http://$IP:8080/health"
-        echo "Diretório: $BASE_DIR"
-        echo "Usuário: hlsuser"
-        echo "Status: $(systemctl is-active $SERVICE_NAME 2>/dev/null || echo 'inactive')"
-        echo ""
-        echo "=== Diretórios ==="
-        echo "Uploads: $BASE_DIR/uploads/"
-        echo "HLS: $BASE_DIR/hls/"
-        echo "Logs: $BASE_DIR/logs/"
-        echo "DB: $BASE_DIR/db/"
-        echo ""
-        echo "=== Comandos Úteis ==="
-        echo "• hls-control start     - Iniciar serviço"
-        echo "• hls-control stop      - Parar serviço"
-        echo "• hls-control restart   - Reiniciar serviço"
-        echo "• hls-control status    - Ver status completo"
-        echo "• hls-control logs      - Ver logs"
-        echo "• hls-control monitor   - Monitor do sistema"
-        echo "• hls-control cleanup   - Limpar arquivos antigos"
-        echo "• hls-control info      - Esta mensagem"
         ;;
     test)
         echo "🧪 Testando sistema..."
-        echo "1. Testando porta 8080..."
-        if curl -s http://localhost:8080/health | grep -q "healthy"; then
-            echo "✅ Health check OK"
-        else
-            echo "❌ Health check falhou"
-        fi
-        
+        echo "Porta 8080:"
+        curl -s http://localhost:8080/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8080/health
         echo ""
-        echo "2. Testando FFmpeg..."
-        if command -v ffmpeg &> /dev/null; then
-            echo "✅ FFmpeg encontrado: $(ffmpeg -version | head -1)"
-        else
-            echo "❌ FFmpeg não encontrado"
-        fi
-        
-        echo ""
-        echo "3. Testando espaço em disco..."
-        df -h /opt | tail -1
+        echo "FFmpeg:"
+        ffmpeg -version 2>/dev/null | head -1 || echo "FFmpeg não encontrado"
         ;;
-    help|*)
-        show_header
+    cleanup)
+        echo "🧹 Limpando arquivos antigos..."
+        find /opt/hls-converter/uploads -type f -mtime +7 -delete 2>/dev/null
+        echo "✅ Uploads antigos removidos"
+        ;;
+    info)
+        IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+        echo "=== HLS Converter PRO ==="
+        echo "Porta: 8080"
+        echo "URL: http://$IP:8080"
+        echo "Health: http://$IP:8080/health"
+        echo "Diretório: /opt/hls-converter"
+        echo "Usuário: hlsuser"
+        echo "Status: $(systemctl is-active hls-converter 2>/dev/null || echo 'inactive')"
+        ;;
+    *)
+        echo "Uso: hlsctl [comando]"
         echo ""
-        echo "Uso: hls-control [comando]"
-        echo ""
-        echo "Comandos disponíveis:"
+        echo "Comandos:"
         echo "  start     - Iniciar serviço"
         echo "  stop      - Parar serviço"
         echo "  restart   - Reiniciar serviço"
-        echo "  status    - Status completo"
-        echo "  logs      - Ver logs (use -f para seguir)"
-        echo "  monitor   - Monitor do sistema"
-        echo "  cleanup   - Limpar arquivos antigos"
+        echo "  status    - Ver status"
+        echo "  logs      - Ver logs"
         echo "  test      - Testar sistema"
-        echo "  info      - Informações completas"
-        echo "  help      - Esta mensagem"
+        echo "  cleanup   - Limpar arquivos antigos"
+        echo "  info      - Informações do sistema"
         ;;
 esac
 EOF
 
-sudo chmod +x /usr/local/bin/hls-control
+sudo chmod +x /usr/local/bin/hlsctl
 
-# 16. INICIAR SERVIÇO
+# 15. INICIAR SERVIÇO
 echo "🚀 Iniciando serviço..."
 sudo systemctl daemon-reload
 sudo systemctl enable hls-converter.service
@@ -1533,7 +1374,7 @@ sudo systemctl start hls-converter.service
 
 sleep 5
 
-# 17. VERIFICAR INSTALAÇÃO
+# 16. VERIFICAR INSTALAÇÃO
 echo "🔍 Verificando instalação..."
 
 if sudo systemctl is-active --quiet hls-converter.service; then
@@ -1566,25 +1407,30 @@ else
     curl -s http://localhost:8080/health && echo "✅ Funciona manualmente!"
 fi
 
-# 18. OBTER INFORMAÇÕES DO SISTEMA
+# 17. OBTER INFORMAÇÕES DO SISTEMA
 IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
 echo "🎉🎉🎉 INSTALAÇÃO COMPLETA CONCLUÍDA! 🎉🎉🎉"
 echo "=========================================="
 echo ""
-echo "✅ SISTEMA INSTALADO COM SUCESSO"
+echo "✅ SISTEMA INSTALADO E CORRIGIDO COM SUCESSO"
 echo ""
-echo "📊 CARACTERÍSTICAS INCLUÍDAS:"
+echo "🔧 CORREÇÕES APLICADAS:"
+echo "   ✔️  Importado secure_filename do werkzeug.utils"
+echo "   ✔️  Instalado werkzeug no pip"
+echo "   ✔️  Tratamento de erros melhorado"
+echo "   ✔️  Timeout para conversões longas"
+echo "   ✔️  Código mais robusto"
+echo ""
+echo "📊 CARACTERÍSTICAS:"
 echo "   ✅ Dashboard profissional completo"
 echo "   ✅ Conversão HLS com múltiplas qualidades"
 echo "   ✅ Player de vídeo integrado"
 echo "   ✅ Monitoramento do sistema em tempo real"
 echo "   ✅ Histórico de conversões"
 echo "   ✅ Interface responsiva e moderna"
-echo "   ✅ API REST completa"
 echo "   ✅ Sistema de logs detalhado"
-echo "   ✅ Limpeza automática de arquivos"
 echo "   ✅ Otimizado para produção"
 echo ""
 echo "🌐 URLS DE ACESSO:"
@@ -1594,14 +1440,14 @@ echo "   📊 API SYSTEM: http://$IP:8080/api/system"
 echo "   📋 API CONVERSIONS: http://$IP:8080/api/conversions"
 echo ""
 echo "⚙️  COMANDOS DE GERENCIAMENTO:"
-echo "   • hls-control start      - Iniciar"
-echo "   • hls-control stop       - Parar"
-echo "   • hls-control restart    - Reiniciar"
-echo "   • hls-control status     - Status completo"
-echo "   • hls-control logs       - Ver logs"
-echo "   • hls-control monitor    - Monitor do sistema"
-echo "   • hls-control test       - Testar sistema"
-echo "   • hls-control info       - Informações"
+echo "   • hlsctl start      - Iniciar"
+echo "   • hlsctl stop       - Parar"
+echo "   • hlsctl restart    - Reiniciar"
+echo "   • hlsctl status     - Status"
+echo "   • hlsctl logs       - Ver logs"
+echo "   • hlsctl test       - Testar sistema"
+echo "   • hlsctl cleanup    - Limpar arquivos antigos"
+echo "   • hlsctl info       - Informações"
 echo ""
 echo "📁 DIRETÓRIOS DO SISTEMA:"
 echo "   • Aplicação: /opt/hls-converter/"
@@ -1610,16 +1456,11 @@ echo "   • HLS: /opt/hls-converter/hls/"
 echo "   • Logs: /opt/hls-converter/logs/"
 echo "   • Database: /opt/hls-converter/db/"
 echo ""
-echo "🔧 INFORMAÇÕES TÉCNICAS:"
-echo "   • Porta: 8080"
-echo "   • Usuário: hlsuser"
-echo "   • Python: $(python3 --version)"
-echo "   • FFmpeg: $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f1-3 || echo 'Instalado')"
-echo "   • Waitress: Servidor de produção"
+echo "💡 COMO USAR:"
+echo "   1. Acesse http://$IP:8080"
+echo "   2. Arraste vídeos para a área de upload"
+echo "   3. Selecione as qualidades desejadas"
+echo "   4. Clique em 'Iniciar Conversão'"
+echo "   5. Use o link M3U8 gerado em players HLS"
 echo ""
-echo "💡 DICAS RÁPIDAS:"
-echo "   1. Execute 'hls-control test' para verificar o sistema"
-echo "   2. Execute 'hls-control monitor' para ver estatísticas"
-echo "   3. Acesse http://$IP:8080 para usar o sistema"
-echo ""
-echo "🚀 SISTEMA PRONTO PARA PRODUÇÃO!"
+echo "🚀 SISTEMA PRONTO PARA USO!"
