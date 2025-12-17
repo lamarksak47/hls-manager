@@ -1,12 +1,16 @@
 #!/bin/bash
-# install_hls_converter_final.sh - Versão FINAL e CORRIGIDA
+# install_hls_converter_final.sh - Versão corrigida para home directory
 
 set -e
 
-echo "🚀 INSTALANDO HLS CONVERTER FINAL"
-echo "================================"
+echo "🚀 INSTALANDO HLS CONVERTER - HOME DIRECTORY VERSION"
+echo "=================================================="
 
-# 1. Verificar sistema
+# 1. Definir diretório base (home do usuário)
+HLS_HOME="$HOME/hls-converter"
+echo "📁 Diretório base: $HLS_HOME"
+
+# 2. Verificar sistema
 echo "🔍 Verificando sistema..."
 if mount | grep " / " | grep -q "ro,"; then
     echo "⚠️  Sistema de arquivos root está SOMENTE LEITURA! Corrigindo..."
@@ -14,42 +18,36 @@ if mount | grep " / " | grep -q "ro,"; then
     echo "✅ Sistema de arquivos agora é leitura/gravação"
 fi
 
-# 2. Parar serviços existentes
+# 3. Parar serviços existentes
 echo "🛑 Parando serviços existentes..."
 sudo systemctl stop hls-converter hls-simple hls-dashboard 2>/dev/null || true
 sudo pkill -9 python 2>/dev/null || true
 sleep 2
 
-# 3. Limpar instalações anteriores
+# 4. Limpar instalações anteriores
 echo "🧹 Limpando instalações anteriores..."
-sudo rm -rf /opt/hls-converter 2>/dev/null || true
+rm -rf "$HLS_HOME" 2>/dev/null || true
 sudo rm -f /etc/systemd/system/hls-*.service 2>/dev/null || true
 sudo systemctl daemon-reload
 
-# 4. Atualizar sistema
+# 5. Atualizar sistema
 echo "📦 Atualizando sistema..."
 sudo apt-get update
 sudo apt-get upgrade -y
 
-# 5. Instalar dependências
+# 6. Instalar dependências
 echo "🔧 Instalando dependências..."
 sudo apt-get install -y python3 python3-pip python3-venv ffmpeg curl
 
-# 6. Criar estrutura
+# 7. Criar estrutura
 echo "🏗️  Criando estrutura de diretórios..."
-sudo mkdir -p /opt/hls-converter/{uploads,hls,logs,db}
-cd /opt/hls-converter
+mkdir -p "$HLS_HOME"/{uploads,hls,logs,db}
+cd "$HLS_HOME"
 
-# 7. Criar usuário
-echo "👤 Criando usuário dedicado..."
-if id "hlsuser" &>/dev/null; then
-    echo "✅ Usuário hlsuser já existe"
-else
-    sudo useradd -r -s /bin/false hlsuser
-    echo "✅ Usuário hlsuser criado"
-fi
+# 8. Criar usuário (opcional, agora usando usuário atual)
+echo "👤 Usando usuário atual: $USER"
 
-# 8. Configurar ambiente Python
+# 9. Configurar ambiente Python
 echo "🐍 Configurando ambiente Python..."
 python3 -m venv venv
 source venv/bin/activate
@@ -58,10 +56,10 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install flask werkzeug psutil
 
-# 9. CRIAR APLICAÇÃO FLASK SIMPLES E FUNCIONAL
+# 10. CRIAR APLICAÇÃO FLASK SIMPLES E FUNCIONAL
 echo "💻 Criando aplicação simples e funcional..."
 
-sudo tee app.py > /dev/null << 'EOF'
+cat > app.py << 'EOF'
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory
 import os
 import subprocess
@@ -74,8 +72,8 @@ import shutil
 
 app = Flask(__name__)
 
-# Configurações
-BASE_DIR = "/opt/hls-converter"
+# Configurações - usando diretório home
+BASE_DIR = os.path.expanduser("~/hls-converter")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 HLS_DIR = os.path.join(BASE_DIR, "hls")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -800,9 +798,9 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
 EOF
 
-# 10. CRIAR BANCO DE DADOS INICIAL
+# 11. CRIAR BANCO DE DADOS INICIAL
 echo "💾 Criando banco de dados inicial..."
-sudo -u hlsuser tee /opt/hls-converter/db/conversions.json > /dev/null << 'EOF'
+cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 {
     "conversions": [],
     "stats": {
@@ -813,21 +811,20 @@ sudo -u hlsuser tee /opt/hls-converter/db/conversions.json > /dev/null << 'EOF'
 }
 EOF
 
-# 11. CRIAR SERVIÇO SYSTEMD SIMPLES
+# 12. CRIAR SERVIÇO SYSTEMD (agora como usuário)
 echo "⚙️ Configurando serviço systemd..."
 
-sudo tee /etc/systemd/system/hls-converter.service > /dev/null << 'EOF'
+cat > "$HLS_HOME/hls-converter.service" << EOF
 [Unit]
 Description=HLS Converter Service
 After=network.target
 
 [Service]
 Type=simple
-User=hlsuser
-Group=hlsuser
-WorkingDirectory=/opt/hls-converter
-Environment=PATH=/opt/hls-converter/venv/bin
-ExecStart=/opt/hls-converter/venv/bin/python3 /opt/hls-converter/app.py
+User=$USER
+WorkingDirectory=$HLS_HOME
+Environment=PATH=$HLS_HOME/venv/bin
+ExecStart=$HLS_HOME/venv/bin/python3 $HLS_HOME/app.py
 Restart=always
 RestartSec=10
 
@@ -835,17 +832,23 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 12. CONFIGURAR PERMISSÕES
-echo "🔐 Configurando permissões..."
-sudo chown -R hlsuser:hlsuser /opt/hls-converter
-sudo chmod 755 /opt/hls-converter
-sudo chmod 644 /opt/hls-converter/*.py
-sudo chmod 644 /opt/hls-converter/db/*.json
+# 13. INSTALAR O SERVIÇO
+echo "📦 Instalando serviço systemd..."
+sudo cp "$HLS_HOME/hls-converter.service" /etc/systemd/system/
+sudo systemctl daemon-reload
 
-# 13. CRIAR SCRIPT DE GERENCIAMENTO SIMPLES
+# 14. CONFIGURAR PERMISSÕES
+echo "🔐 Configurando permissões..."
+chmod 755 "$HLS_HOME"
+chmod 644 "$HLS_HOME"/*.py
+chmod 644 "$HLS_HOME/db"/*.json
+chmod -R 755 "$HLS_HOME/uploads"
+chmod -R 755 "$HLS_HOME/hls"
+
+# 15. CRIAR SCRIPT DE GERENCIAMENTO SIMPLES
 echo "📝 Criando script de gerenciamento..."
 
-sudo tee /usr/local/bin/hlsctl > /dev/null << 'EOF'
+cat > "$HOME/hlsctl" << 'EOF'
 #!/bin/bash
 
 case "$1" in
@@ -878,15 +881,16 @@ case "$1" in
         ;;
     cleanup)
         echo "🧹 Cleaning old files..."
-        find /opt/hls-converter/uploads -type f -mtime +7 -delete 2>/dev/null
-        echo "✅ Old uploads removed"
+        find "$HOME/hls-converter/uploads" -type f -mtime +7 -delete 2>/dev/null
+        find "$HOME/hls-converter/hls" -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null
+        echo "✅ Old files removed"
         ;;
     info)
         IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
         echo "=== HLS Converter ==="
         echo "Port: 5000"
         echo "URL: http://$IP:5000"
-        echo "Directory: /opt/hls-converter"
+        echo "Directory: $HOME/hls-converter"
         echo ""
         echo "Commands:"
         echo "  hlsctl start     - Start service"
@@ -913,17 +917,16 @@ case "$1" in
 esac
 EOF
 
-sudo chmod +x /usr/local/bin/hlsctl
+chmod +x "$HOME/hlsctl"
 
-# 14. INICIAR SERVIÇO
+# 16. INICIAR SERVIÇO
 echo "🚀 Starting service..."
-sudo systemctl daemon-reload
 sudo systemctl enable hls-converter.service
 sudo systemctl start hls-converter.service
 
 sleep 5
 
-# 15. VERIFICAR INSTALAÇÃO
+# 17. VERIFICAR INSTALAÇÃO
 echo "🔍 Verifying installation..."
 
 if sudo systemctl is-active --quiet hls-converter.service; then
@@ -949,13 +952,13 @@ else
     sudo journalctl -u hls-converter -n 20 --no-pager
     echo ""
     echo "🔄 Trying manual start..."
-    cd /opt/hls-converter
-    sudo -u hlsuser ./venv/bin/python3 app.py &
+    cd "$HLS_HOME"
+    ./venv/bin/python3 app.py &
     sleep 5
     curl -s http://localhost:5000/health && echo "✅ Works manually!"
 fi
 
-# 16. OBTER INFORMAÇÕES DO SISTEMA
+# 18. OBTER INFORMAÇÕES DO SISTEMA
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
@@ -969,16 +972,24 @@ echo "   🎨 WEB INTERFACE: http://$IP:5000"
 echo "   🩺 HEALTH CHECK: http://$IP:5000/health"
 echo ""
 echo "⚙️  MANAGEMENT COMMANDS:"
-echo "   • hlsctl start      - Start service"
-echo "   • hlsctl stop       - Stop service"
-echo "   • hlsctl restart    - Restart service"
-echo "   • hlsctl status     - Check status"
-echo "   • hlsctl logs       - View logs"
-echo "   • hlsctl test       - Test system"
+echo "   • $HOME/hlsctl start      - Start service"
+echo "   • $HOME/hlsctl stop       - Stop service"
+echo "   • $HOME/hlsctl restart    - Restart service"
+echo "   • $HOME/hlsctl status     - Check status"
+echo "   • $HOME/hlsctl logs       - View logs"
+echo "   • $HOME/hlsctl test       - Test system"
+echo "   • $HOME/hlsctl cleanup    - Clean old files"
 echo ""
 echo "📁 SYSTEM DIRECTORIES:"
-echo "   • Application: /opt/hls-converter/"
-echo "   • Uploads: /opt/hls-converter/uploads/"
-echo "   • HLS: /opt/hls-converter/hls/"
-echo "   • Logs: /opt/hls-converter/logs/"
-echo "   • Database: /opt/hls-converter/d
+echo "   • Application: $HOME/hls-converter/"
+echo "   • Uploads: $HOME/hls-converter/uploads/"
+echo "   • HLS: $HOME/hls-converter/hls/"
+echo "   • Logs: $HOME/hls-converter/logs/"
+echo "   • Database: $HOME/hls-converter/db/"
+echo ""
+echo "🔄 Quick start:"
+echo "   cd $HOME/hls-converter"
+echo "   source venv/bin/activate"
+echo "   python3 app.py"
+echo ""
+echo "📌 Note: All files are in your home directory with proper permissions!"
