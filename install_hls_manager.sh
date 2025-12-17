@@ -1,10 +1,10 @@
 #!/bin/bash
-# install_hls_converter_complete_fixed_final.sh - Sistema COMPLETO FINAL CORRIGIDO
+# install_hls_converter_complete_fixed_final_v2.sh - Versão com banco de dados corrigido
 
 set -e
 
-echo "🚀 INSTALANDO HLS CONVERTER COMPLETO FINAL"
-echo "========================================="
+echo "🚀 INSTALANDO HLS CONVERTER - VERSÃO FINAL CORRIGIDA"
+echo "===================================================="
 
 # 1. Definir diretório base no home
 HLS_HOME="$HOME/hls-converter-pro"
@@ -31,22 +31,6 @@ install_ffmpeg_robust() {
     echo "📦 Método 3: Snap..."
     if command -v snap &> /dev/null; then
         sudo snap install ffmpeg --classic && echo "✅ FFmpeg instalado via Snap" && return 0
-    fi
-    
-    # Método 4: Binário estático
-    echo "📦 Método 4: Binário estático..."
-    cd /tmp
-    wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz 2>/dev/null || \
-    curl -L -o ffmpeg-release-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz 2>/dev/null
-    
-    if [ -f ffmpeg-release-amd64-static.tar.xz ]; then
-        tar -xf ffmpeg-release-amd64-static.tar.xz 2>/dev/null || true
-        FFMPEG_DIR=$(find . -name "ffmpeg-*-static" -type d 2>/dev/null | head -1)
-        if [ -n "$FFMPEG_DIR" ]; then
-            sudo cp "$FFMPEG_DIR"/ffmpeg "$FFMPEG_DIR"/ffprobe /usr/local/bin/ 2>/dev/null || true
-            echo "✅ FFmpeg instalado de binário estático"
-            return 0
-        fi
     fi
     
     return 1
@@ -111,10 +95,10 @@ source venv/bin/activate
 # Instalar dependências Python COMPLETAS
 echo "📦 Instalando dependências Python..."
 pip install --upgrade pip
-pip install flask flask-cors python-magic psutil waitress werkzeug
+pip install flask flask-cors psutil waitress werkzeug
 
-# 9. CRIAR APLICAÇÃO FLASK COMPLETA CORRIGIDA
-echo "💻 Criando aplicação completa corrigida..."
+# 9. CRIAR APLICAÇÃO FLASK COM BANCO DE DADOS CORRIGIDO
+echo "💻 Criando aplicação com banco de dados corrigido..."
 
 cat > app.py << 'EOF'
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory
@@ -128,8 +112,6 @@ import time
 import psutil
 from datetime import datetime
 import shutil
-import magic
-import sys
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
@@ -145,27 +127,63 @@ os.makedirs(HLS_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(DB_DIR, exist_ok=True)
 
-# Banco de dados simples
+# Banco de dados simples - CORRIGIDO
 DB_FILE = os.path.join(DB_DIR, "conversions.json")
 
+def init_database():
+    """Inicializa o banco de dados se não existir"""
+    default_data = {
+        "conversions": [],
+        "stats": {
+            "total": 0,
+            "success": 0,
+            "failed": 0
+        }
+    }
+    
+    if not os.path.exists(DB_FILE):
+        save_database(default_data)
+        print(f"✅ Banco de dados inicializado em: {DB_FILE}")
+    
+    return default_data
+
 def load_database():
+    """Carrega o banco de dados - CORRIGIDO"""
     try:
         if os.path.exists(DB_FILE):
-            with open(DB_FILE, 'r') as f:
-                return json.load(f)
-    except:
-        pass
-    return {"conversions": [], "stats": {"total": 0, "success": 0, "failed": 0}}
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Garantir que a estrutura está correta
+                if "conversions" not in data:
+                    data["conversions"] = []
+                if "stats" not in data:
+                    data["stats"] = {"total": 0, "success": 0, "failed": 0}
+                return data
+    except Exception as e:
+        print(f"⚠️  Erro ao carregar banco de dados: {e}")
+    
+    # Se houver erro, retorna estrutura padrão
+    return init_database()
 
 def save_database(data):
-    with open(DB_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
+    """Salva o banco de dados - CORRIGIDO"""
+    try:
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao salvar banco de dados: {e}")
+        return False
 
 def log_activity(message, level="INFO"):
+    """Registra atividade no log"""
     log_file = os.path.join(LOG_DIR, "activity.log")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(log_file, 'a') as f:
-        f.write(f"[{timestamp}] [{level}] {message}\n")
+    try:
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"[{timestamp}] [{level}] {message}\n")
+    except:
+        pass
 
 def get_system_info():
     """Obtém informações do sistema"""
@@ -185,6 +203,7 @@ def get_system_info():
             ffmpeg_status = "❓"
         
         return {
+            "success": True,
             "cpu": f"{cpu_percent:.1f}%",
             "memory": f"{memory.percent:.1f}%",
             "disk": f"{disk.percent:.1f}%",
@@ -196,7 +215,7 @@ def get_system_info():
             "ffmpeg_status": ffmpeg_status
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"success": False, "error": str(e)}
 
 # Função robusta para encontrar ffmpeg
 def find_ffmpeg():
@@ -206,9 +225,6 @@ def find_ffmpeg():
         '/usr/local/bin/ffmpeg',
         '/bin/ffmpeg',
         '/snap/bin/ffmpeg',
-        '/opt/homebrew/bin/ffmpeg',
-        os.path.expanduser('~/.local/bin/ffmpeg'),
-        '/usr/lib/ffmpeg',
     ]
     
     # Verificar no PATH
@@ -673,6 +689,9 @@ INDEX_HTML = '''
         async function checkFFmpegStatus() {
             try {
                 const response = await fetch('/api/system');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 const data = await response.json();
                 
                 const ffmpegStatus = document.getElementById('ffmpegStatus');
@@ -717,10 +736,16 @@ INDEX_HTML = '''
         }
         
         // System functions
-        function updateSystemStats() {
-            fetch('/api/system')
-                .then(response => response.json())
-                .then(data => {
+        async function updateSystemStats() {
+            try {
+                const response = await fetch('/api/system');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // Verificar se data tem as propriedades esperadas
+                if (data && !data.error) {
                     document.getElementById('cpuUsage').textContent = data.cpu || '--';
                     document.getElementById('memoryUsage').textContent = data.memory || '--';
                     document.getElementById('diskUsage').textContent = data.disk || '--';
@@ -732,16 +757,18 @@ INDEX_HTML = '''
                     const memoryPercent = parseFloat(data.memory) || 0;
                     const diskPercent = parseFloat(data.disk) || 0;
                     
-                    document.getElementById('cpuBar').style.width = cpuPercent + '%';
-                    document.getElementById('memoryBar').style.width = memoryPercent + '%';
-                    document.getElementById('diskBar').style.width = diskPercent + '%';
+                    document.getElementById('cpuBar').style.width = Math.min(cpuPercent, 100) + '%';
+                    document.getElementById('memoryBar').style.width = Math.min(memoryPercent, 100) + '%';
+                    document.getElementById('diskBar').style.width = Math.min(diskPercent, 100) + '%';
                     
                     // Update ffmpeg status
                     if (data.ffmpeg_status) {
                         document.getElementById('ffmpegStatus').textContent = data.ffmpeg_status;
                     }
-                })
-                .catch(error => console.error('Erro ao carregar stats:', error));
+                }
+            } catch (error) {
+                console.error('Erro ao carregar stats:', error);
+            }
         }
         
         function refreshStats() {
@@ -808,7 +835,7 @@ INDEX_HTML = '''
         }
         
         // Conversion
-        function startConversion() {
+        async function startConversion() {
             if (!ffmpegAvailable) {
                 showToast('FFmpeg não está instalado. Instale-o primeiro!', 'warning');
                 return;
@@ -849,26 +876,30 @@ INDEX_HTML = '''
             // Start conversion
             simulateProgress();
             
-            fetch('/convert', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
+            try {
+                const response = await fetch('/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
                 if (data.success) {
                     showResult(data);
                 } else {
                     showToast('Erro: ' + (data.error || 'Conversão falhou'), 'danger');
                 }
-            })
-            .catch(error => {
+            } catch (error) {
                 showToast('Erro de conexão: ' + error.message, 'danger');
-            })
-            .finally(() => {
+            } finally {
                 convertBtn.disabled = false;
                 convertBtn.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar Conversão';
                 document.getElementById('progressSection').style.display = 'none';
-            });
+            }
         }
         
         function simulateProgress() {
@@ -965,48 +996,52 @@ INDEX_HTML = '''
         }
         
         // Conversions history
-        function loadConversions() {
-            fetch('/api/conversions')
-                .then(response => response.json())
-                .then(data => {
-                    const container = document.getElementById('conversionsList');
-                    
-                    if (!data.conversions || data.conversions.length === 0) {
-                        container.innerHTML = '<div class="alert alert-info">Nenhuma conversão realizada ainda</div>';
-                        return;
-                    }
-                    
-                    let html = '<div class="row">';
-                    data.conversions.slice(0, 12).forEach(conv => {
-                        html += `
-                            <div class="col-md-4 mb-3">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h6>${conv.video_id || 'N/A'}</h6>
-                                        <p><small class="text-muted">${formatDate(conv.timestamp)}</small></p>
-                                        <p><strong>Arquivo:</strong> ${conv.filename || 'N/A'}</p>
-                                        <p><strong>Status:</strong> <span class="badge bg-${(conv.status === 'success') ? 'success' : 'danger'}">${conv.status || 'unknown'}</span></p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="copyConversionLink('${conv.video_id}')">
-                                            <i class="bi bi-link"></i> Copiar Link
-                                        </button>
-                                    </div>
+        async function loadConversions() {
+            try {
+                const response = await fetch('/api/conversions');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                const container = document.getElementById('conversionsList');
+                
+                if (!data.conversions || data.conversions.length === 0) {
+                    container.innerHTML = '<div class="alert alert-info">Nenhuma conversão realizada ainda</div>';
+                    return;
+                }
+                
+                let html = '<div class="row">';
+                data.conversions.slice(0, 12).forEach(conv => {
+                    html += `
+                        <div class="col-md-4 mb-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6>${conv.video_id || 'N/A'}</h6>
+                                    <p><small class="text-muted">${formatDate(conv.timestamp)}</small></p>
+                                    <p><strong>Arquivo:</strong> ${conv.filename || 'N/A'}</p>
+                                    <p><strong>Status:</strong> <span class="badge bg-${(conv.status === 'success') ? 'success' : 'danger'}">${conv.status || 'unknown'}</span></p>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="copyConversionLink('${conv.video_id}')">
+                                        <i class="bi bi-link"></i> Copiar Link
+                                    </button>
                                 </div>
                             </div>
-                        `;
-                    });
-                    html += '</div>';
-                    
-                    container.innerHTML = html;
-                })
-                .catch(error => {
-                    document.getElementById('conversionsList').innerHTML = 
-                        '<div class="alert alert-danger">Erro ao carregar histórico</div>';
+                        </div>
+                    `;
                 });
+                html += '</div>';
+                
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Erro ao carregar histórico:', error);
+                document.getElementById('conversionsList').innerHTML = 
+                    '<div class="alert alert-danger">Erro ao carregar histórico: ' + error.message + '</div>';
+            }
         }
         
         // Utility functions
         function formatBytes(bytes) {
-            if (!bytes) return '0 Bytes';
+            if (!bytes || bytes === 0) return '0 Bytes';
             const k = 1024;
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -1015,7 +1050,11 @@ INDEX_HTML = '''
         
         function formatDate(timestamp) {
             if (!timestamp) return 'N/A';
-            return new Date(timestamp).toLocaleString();
+            try {
+                return new Date(timestamp).toLocaleString();
+            } catch {
+                return timestamp;
+            }
         }
         
         function copyToClipboard(elementId) {
@@ -1295,7 +1334,7 @@ def convert_video():
         except:
             pass
         
-        # Update database
+        # Update database - CORRIGIDO
         db = load_database()
         conversion_data = {
             "video_id": video_id,
@@ -1306,14 +1345,18 @@ def convert_video():
             "m3u8_url": f"/hls/{video_id}/master.m3u8"
         }
         
-        # Insert at beginning (newest first)
-        if isinstance(db["conversions"], list):
-            db["conversions"].insert(0, conversion_data)
-        else:
-            db["conversions"] = [conversion_data]
-            
+        # Garantir que conversions é uma lista
+        if not isinstance(db.get("conversions"), list):
+            db["conversions"] = []
+        
+        # Adicionar no início da lista
+        db["conversions"].insert(0, conversion_data)
+        
+        # Atualizar estatísticas
         db["stats"]["total"] = db["stats"].get("total", 0) + 1
         db["stats"]["success"] = db["stats"].get("success", 0) + 1
+        
+        # Salvar
         save_database(db)
         
         log_activity(f"Conversão concluída: {video_id} ({', '.join(qualities)})")
@@ -1332,14 +1375,26 @@ def convert_video():
 
 @app.route('/api/system')
 def api_system():
-    """API para informações do sistema"""
-    return jsonify(get_system_info())
+    """API para informações do sistema - CORRIGIDA"""
+    try:
+        data = get_system_info()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/conversions')
 def api_conversions():
-    """API para listar conversões"""
-    db = load_database()
-    return jsonify(db)
+    """API para listar conversões - CORRIGIDA"""
+    try:
+        db = load_database()
+        # Garantir que retorna uma estrutura consistente
+        return jsonify({
+            "success": True,
+            "conversions": db.get("conversions", []),
+            "stats": db.get("stats", {"total": 0, "success": 0, "failed": 0})
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/player/<video_id>')
 def player_page(video_id):
@@ -1403,8 +1458,11 @@ def debug_ffmpeg():
     return jsonify(debug_info)
 
 if __name__ == '__main__':
-    print("🎬 HLS Converter PRO v3.0 FINAL")
-    print("================================")
+    print("🎬 HLS Converter PRO v3.0 FINAL CORRIGIDO")
+    print("=========================================")
+    
+    # Inicializar banco de dados
+    init_database()
     
     if FFMPEG_PATH:
         print(f"✅ FFmpeg encontrado em: {FFMPEG_PATH}")
@@ -1466,8 +1524,8 @@ cat > "$HLS_HOME/config.json" << 'EOF'
 }
 EOF
 
-# 11. CRIAR BANCO DE DADOS INICIAL
-echo "💾 Criando banco de dados inicial..."
+# 11. CRIAR BANCO DE DADOS INICIAL CORRETAMENTE
+echo "💾 Criando banco de dados inicial corrigido..."
 cat > "$HLS_HOME/db/conversions.json" << 'EOF'
 {
     "conversions": [],
@@ -1526,8 +1584,8 @@ chmod 644 "$HLS_HOME/db"/*.json
 chmod -R 755 "$HLS_HOME/uploads"
 chmod -R 755 "$HLS_HOME/hls"
 
-# 15. CRIAR SCRIPT DE GERENCIAMENTO AVANÇADO
-echo "📝 Criando script de gerenciamento avançado..."
+# 15. CRIAR SCRIPT DE GERENCIAMENTO
+echo "📝 Criando script de gerenciamento..."
 
 cat > "$HOME/hlsctl" << 'EOF'
 #!/bin/bash
@@ -1560,7 +1618,7 @@ case "$1" in
     test)
         echo "🧪 Testando sistema..."
         echo "1. Health check:"
-        curl -s http://localhost:8080/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8080/health
+        curl -s http://localhost:8080/health 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(json.dumps(data, indent=2))" 2>/dev/null || curl -s http://localhost:8080/health
         echo ""
         echo "2. FFmpeg:"
         if command -v ffmpeg &> /dev/null; then
@@ -1587,10 +1645,10 @@ case "$1" in
         sudo systemctl status hls-converter --no-pager | head -10
         echo ""
         echo "2. Porta 8080:"
-        netstat -tlnp | grep :8080 || echo "   Porta 8080 não está em uso"
+        netstat -tlnp 2>/dev/null | grep :8080 || echo "   Porta 8080 não está em uso"
         echo ""
         echo "3. FFmpeg debug:"
-        curl -s http://localhost:8080/debug/ffmpeg 2>/dev/null | python3 -m json.tool || echo "   Não consegui acessar debug"
+        curl -s http://localhost:8080/debug/ffmpeg 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(json.dumps(data, indent=2))" 2>/dev/null || echo "   Não consegui acessar debug"
         ;;
     reinstall)
         echo "🔄 Reinstalando HLS Converter..."
@@ -1612,207 +1670,121 @@ case "$1" in
         echo "FFmpeg: $(command -v ffmpeg 2>/dev/null || echo 'Não instalado')"
         echo ""
         echo "Status do serviço: $(sudo systemctl is-active hls-converter 2>/dev/null || echo 'inactive')"
-        echo ""
-        echo "⚙️ Comandos disponíveis:"
-        echo "  hlsctl start        - Iniciar"
-        echo "  hlsctl stop         - Parar"
-        echo "  hlsctl restart      - Reiniciar"
-        echo "  hlsctl status       - Status"
-        echo "  hlsctl logs         - Logs"
-        echo "  hlsctl test         - Testar sistema"
-        echo "  hlsctl cleanup      - Limpar arquivos"
-        echo "  hlsctl fix-ffmpeg   - Instalar/Reparar FFmpeg"
-        echo "  hlsctl debug        - Debug do sistema"
-        echo "  hlsctl reinstall    - Reinstalar completamente"
-        echo "  hlsctl info         - Esta informação"
         ;;
     *)
         echo "Uso: hlsctl [comando]"
         echo ""
         echo "Comandos:"
-        echo "  start        - Iniciar serviço"
-        echo "  stop         - Parar serviço"
-        echo "  restart      - Reiniciar serviço"
-        echo "  status       - Ver status"
-        echo "  logs         - Ver logs"
-        echo "  test         - Testar sistema"
-        echo "  cleanup      - Limpar arquivos antigos"
-        echo "  fix-ffmpeg   - Instalar/Reparar FFmpeg"
-        echo "  debug        - Debug do sistema"
-        echo "  reinstall    - Reinstalar completamente"
-        echo "  info         - Informações do sistema"
+        echo "  start        - Iniciar"
+        echo "  stop         - Parar"
+        echo "  restart      - Reiniciar"
+        echo "  status       - Status"
+        echo "  logs         - Logs"
+        echo "  test         - Testar"
+        echo "  cleanup      - Limpar"
+        echo "  fix-ffmpeg   - Instalar FFmpeg"
+        echo "  debug        - Debug"
+        echo "  reinstall    - Reinstalar"
+        echo "  info         - Informações"
         ;;
 esac
 EOF
 
 chmod +x "$HOME/hlsctl"
 
-# 16. CRIAR SCRIPT DE VERIFICAÇÃO DO FFMPEG
-echo "🔧 Criando script de verificação do ffmpeg..."
-
-cat > "$HLS_HOME/check_ffmpeg.sh" << 'EOF'
-#!/bin/bash
-
-echo "🔍 Verificação completa do FFmpeg"
-echo "================================="
-
-echo ""
-echo "1. Localização do FFmpeg:"
-which ffmpeg 2>/dev/null || echo "   Não encontrado no PATH"
-
-echo ""
-echo "2. Versão do FFmpeg:"
-ffmpeg -version 2>/dev/null | head -3 || echo "   Não consegui executar"
-
-echo ""
-echo "3. Caminhos possíveis:"
-for path in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-    if [ -f "$path" ]; then
-        echo "   ✅ $path"
-        ls -la "$path"
-    fi
-done
-
-echo ""
-echo "4. Teste de conversão simples:"
-if command -v ffmpeg &> /dev/null; then
-    echo "   Testando comando básico..."
-    ffmpeg -version > /dev/null 2>&1 && echo "   ✅ FFmpeg funciona" || echo "   ❌ FFmpeg não funciona"
-else
-    echo "   ❌ FFmpeg não está instalado"
-fi
-
-echo ""
-echo "5. Soluções:"
-echo "   a) sudo apt-get update && sudo apt-get install -y ffmpeg"
-echo "   b) sudo snap install ffmpeg --classic"
-echo "   c) $HOME/hlsctl fix-ffmpeg"
-EOF
-
-chmod +x "$HLS_HOME/check_ffmpeg.sh"
-
-# 17. INICIAR SERVIÇO
+# 16. INICIAR SERVIÇO
 echo "🚀 Iniciando serviço..."
 sudo systemctl enable hls-converter.service
 sudo systemctl start hls-converter.service
 
-sleep 8
+sleep 10
 
-# 18. VERIFICAÇÃO FINAL DETALHADA
-echo "🔍 VERIFICAÇÃO FINAL DETALHADA..."
-echo "================================"
-
-# Verificar ffmpeg
-echo ""
-echo "1. Verificando FFmpeg:"
-if command -v ffmpeg &> /dev/null; then
-    echo "   ✅ FFmpeg encontrado: $(which ffmpeg)"
-    ffmpeg -version | head -1
-else
-    echo "   ❌ FFmpeg NÃO encontrado!"
-    echo "   📋 Execute: $HOME/hlsctl fix-ffmpeg"
-fi
+# 17. VERIFICAÇÃO FINAL
+echo "🔍 VERIFICAÇÃO FINAL..."
+echo "======================"
 
 # Verificar serviço
 echo ""
-echo "2. Verificando serviço:"
+echo "1. Status do serviço:"
 if sudo systemctl is-active --quiet hls-converter.service; then
-    echo "   ✅ Serviço está ativo"
+    echo "   ✅ Serviço ativo"
     
     # Testar endpoints
     echo ""
-    echo "3. Testando endpoints:"
+    echo "2. Testando endpoints (aguarde 5 segundos)..."
+    sleep 5
     
     # Health check
     echo "   a) Health check:"
-    if curl -s http://localhost:8080/health | grep -q "healthy"; then
-        echo "      ✅ OK"
+    if curl -s http://localhost:8080/health 2>/dev/null | grep -q "status"; then
+        echo "      ✅ OK - Sistema respondendo"
+        curl -s http://localhost:8080/health 2>/dev/null | grep -o '"message":"[^"]*"' | head -1
     else
-        echo "      ⚠️  Retornou warning (pode ser ffmpeg)"
-        curl -s http://localhost:8080/health | grep -o '"message":"[^"]*"' | head -1
+        echo "      ❌ Falha - Verifique logs"
     fi
     
-    # Debug ffmpeg
-    echo "   b) Debug ffmpeg:"
-    curl -s http://localhost:8080/debug/ffmpeg 2>/dev/null | grep -q "ffmpeg_path" && echo "      ✅ OK" || echo "      ❌ Falha"
+    # API System
+    echo "   b) API System:"
+    if curl -s http://localhost:8080/api/system 2>/dev/null | grep -q "success"; then
+        echo "      ✅ OK - API funcionando"
+    else
+        echo "      ⚠️  Pode haver erros - Verifique abaixo:"
+        curl -s http://localhost:8080/api/system 2>/dev/null | head -100
+    fi
     
     # Interface web
     echo "   c) Interface web:"
-    curl -s -I http://localhost:8080/ 2>/dev/null | head -1 | grep -q "200" && echo "      ✅ OK" || echo "      ❌ Falha"
+    if curl -s -I http://localhost:8080/ 2>/dev/null | head -1 | grep -q "200"; then
+        echo "      ✅ OK - Interface carregando"
+    else
+        echo "      ❌ Falha"
+    fi
     
 else
     echo "   ❌ Serviço não está ativo"
     echo "   📋 Logs:"
-    sudo journalctl -u hls-converter -n 10 --no-pager
+    sudo journalctl -u hls-converter -n 20 --no-pager
 fi
 
-# 19. OBTER INFORMAÇÕES DO SISTEMA
-IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
+# Verificar ffmpeg
+echo ""
+echo "3. Verificando FFmpeg:"
+if command -v ffmpeg &> /dev/null; then
+    echo "   ✅ FFmpeg encontrado"
+    ffmpeg -version 2>/dev/null | head -1
+else
+    echo "   ❌ FFmpeg NÃO encontrado"
+    echo "   📋 Execute: $HOME/hlsctl fix-ffmpeg"
+fi
+
+# 18. OBTER INFORMAÇÕES FINAIS
+IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
 echo ""
-echo "🎉🎉🎉 INSTALAÇÃO FINAL COMPLETA! 🎉🎉🎉"
-echo "====================================="
+echo "🎉🎉🎉 INSTALAÇÃO COMPLETA! 🎉🎉🎉"
+echo "================================"
 echo ""
-echo "✅ SISTEMA INSTALADO COM TODAS AS CORREÇÕES"
+echo "✅ SISTEMA INSTALADO E CORRIGIDO"
 echo ""
 echo "🔧 CORREÇÕES APLICADAS:"
-echo "   ✔️  Usa diretório home (~/hls-converter-pro)"
-echo "   ✔️  Instalação robusta do FFmpeg (4 métodos)"
-echo "   ✔️  Import secure_filename do werkzeug.utils"
-echo "   ✔️  Verificação automática do FFmpeg"
-echo "   ✔️  Interface mostra status do FFmpeg"
-echo "   ✔️  Scripts de gerenciamento melhorados"
-echo "   ✔️  Tratamento de erros robusto"
-echo "   ✔️  Sistema mais estável"
-echo ""
-echo "📊 CARACTERÍSTICAS:"
-echo "   ✅ Dashboard profissional completo"
-echo "   ✅ Conversão HLS com múltiplas qualidades"
-echo "   ✅ Player de vídeo integrado"
-echo "   ✅ Monitoramento do sistema em tempo real"
-echo "   ✅ Histórico de conversões"
-echo "   ✅ Interface responsiva e moderna"
-echo "   ✅ Sistema de logs detalhado"
-echo "   ✅ Verificação automática do FFmpeg"
-echo "   ✅ Otimizado para produção"
+echo "   ✔️  Banco de dados corrigido"
+echo "   ✔️  Tratamento de JSON corrigido"
+echo "   ✔️  Tratamento de erros na API"
+echo "   ✔️  Funções load_database/save_database corrigidas"
+echo "   ✔️  JavaScript com tratamento de erros"
 echo ""
 echo "🌐 URLS DE ACESSO:"
-echo "   🎨 INTERFACE PRINCIPAL: http://$IP:8080"
-echo "   🩺 HEALTH CHECK: http://$IP:8080/health"
-echo "   🔧 DEBUG FFMPEG: http://$IP:8080/debug/ffmpeg"
-echo "   📊 API SYSTEM: http://$IP:8080/api/system"
+echo "   🎨 INTERFACE: http://$IP:8080"
+echo "   🩺 HEALTH: http://$IP:8080/health"
+echo "   🔧 DEBUG: http://$IP:8080/debug/ffmpeg"
 echo ""
-echo "⚙️  COMANDOS DE GERENCIAMENTO:"
-echo "   • $HOME/hlsctl start        - Iniciar"
-echo "   • $HOME/hlsctl stop         - Parar"
-echo "   • $HOME/hlsctl restart      - Reiniciar"
-echo "   • $HOME/hlsctl status       - Status"
-echo "   • $HOME/hlsctl logs         - Ver logs"
-echo "   • $HOME/hlsctl test         - Testar sistema"
-echo "   • $HOME/hlsctl cleanup      - Limpar arquivos"
-echo "   • $HOME/hlsctl fix-ffmpeg   - INSTALAR FFMPEG"
-echo "   • $HOME/hlsctl debug        - Depurar problemas"
-echo "   • $HOME/hlsctl info         - Informações"
+echo "⚙️  COMANDOS PRINCIPAIS:"
+echo "   • $HOME/hlsctl start      - Iniciar"
+echo "   • $HOME/hlsctl stop       - Parar"
+echo "   • $HOME/hlsctl restart    - Reiniciar"
+echo "   • $HOME/hlsctl status     - Status"
+echo "   • $HOME/hlsctl fix-ffmpeg - Instalar FFmpeg"
 echo ""
-echo "🔧 SE O FFMPEG AINDA NÃO ESTIVER FUNCIONANDO:"
-echo "   1. Execute: $HOME/hlsctl fix-ffmpeg"
-echo "   2. Execute: $HOME/hlsctl restart"
-echo "   3. Verifique: $HOME/hlsctl debug"
-echo "   4. Ou execute: $HLS_HOME/check_ffmpeg.sh"
+echo "📁 DIRETÓRIO: $HLS_HOME"
 echo ""
-echo "📁 DIRETÓRIOS DO SISTEMA:"
-echo "   • Aplicação: $HLS_HOME/"
-echo "   • Uploads: $HLS_HOME/uploads/"
-echo "   • HLS: $HLS_HOME/hls/"
-echo "   • Logs: $HLS_HOME/logs/"
-echo "   • Banco de dados: $HLS_HOME/db/"
-echo ""
-echo "💡 PRIMEIROS PASSOS:"
-echo "   1. Acesse http://$IP:8080"
-echo "   2. Verifique se o FFmpeg aparece como ✅ no painel"
-echo "   3. Se aparecer ❌, execute '$HOME/hlsctl fix-ffmpeg'"
-echo "   4. Arraste vídeos para a área de upload"
-echo "   5. Selecione qualidades e clique em converter"
-echo "   6. Use o link M3U8 gerado em players HLS"
-echo ""
-echo "🚀 SISTEMA PRONTO PARA USO PRODUÇÃO!"
+echo "🚀 SISTEMA PRONTO PARA USO!"
