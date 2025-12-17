@@ -55,7 +55,6 @@ import subprocess
 import uuid
 import json
 import time
-import psutil
 from datetime import datetime
 import shutil
 import socket
@@ -141,6 +140,10 @@ HTML_PAGE = '''
         .btn:hover {
             background: #5a67d8;
         }
+        .btn:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
         .file-list {
             background: white;
             padding: 20px;
@@ -171,6 +174,17 @@ HTML_PAGE = '''
         }
         .error {
             color: #f44336;
+        }
+        .info {
+            color: #2196F3;
+        }
+        #m3u8Link {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: monospace;
         }
     </style>
 </head>
@@ -224,12 +238,15 @@ HTML_PAGE = '''
         <div class="status-box">
             <h3 class="success">✅ Conversão Concluída!</h3>
             <p>ID do vídeo: <span id="videoId"></span></p>
-            <p>Link M3U8: <input type="text" id="m3u8Link" style="width:100%;padding:10px;margin:10px 0" readonly></p>
+            <p>Link M3U8: </p>
+            <input type="text" id="m3u8Link" readonly>
+            <br>
             <button class="btn" onclick="copyLink()">📋 Copiar Link</button>
             <button class="btn" onclick="testPlayer()">▶️ Testar Player</button>
+            <button class="btn" onclick="resetForm()">🔄 Novo Vídeo</button>
         </div>
     </div>
-    
+
     <script>
         let selectedFile = null;
         
@@ -237,6 +254,9 @@ HTML_PAGE = '''
         async function checkStatus() {
             try {
                 const response = await fetch('/health');
+                if (!response.ok) {
+                    throw new Error('HTTP error: ' + response.status);
+                }
                 const data = await response.json();
                 
                 if (data.ffmpeg) {
@@ -251,8 +271,11 @@ HTML_PAGE = '''
                 document.getElementById('serviceStatus').className = 'success';
                 
             } catch (error) {
+                console.error('Erro ao verificar status:', error);
                 document.getElementById('serviceStatus').innerHTML = '❌ Offline';
                 document.getElementById('serviceStatus').className = 'error';
+                document.getElementById('ffmpegStatus').innerHTML = '❓ Desconhecido';
+                document.getElementById('ffmpegStatus').className = 'error';
             }
         }
         
@@ -265,6 +288,10 @@ HTML_PAGE = '''
                 document.getElementById('fileName').textContent = 'Nome: ' + selectedFile.name;
                 document.getElementById('fileSize').textContent = 'Tamanho: ' + formatBytes(selectedFile.size);
                 document.getElementById('fileInfo').style.display = 'block';
+                
+                // Esconder outras seções
+                document.getElementById('progressSection').style.display = 'none';
+                document.getElementById('resultSection').style.display = 'none';
             }
         }
         
@@ -272,6 +299,12 @@ HTML_PAGE = '''
         async function startConversion() {
             if (!selectedFile) {
                 alert('Selecione um arquivo primeiro!');
+                return;
+            }
+            
+            // Verificar tamanho do arquivo (limite de 500MB)
+            if (selectedFile.size > 500 * 1024 * 1024) {
+                alert('Arquivo muito grande! Tamanho máximo: 500MB');
                 return;
             }
             
@@ -293,8 +326,15 @@ HTML_PAGE = '''
             formData.append('qualities', JSON.stringify(qualities));
             
             // Mostrar progresso
+            document.getElementById('fileInfo').style.display = 'none';
             document.getElementById('progressSection').style.display = 'block';
-            document.getElementById('convertBtn').disabled = true;
+            document.getElementById('resultSection').style.display = 'none';
+            
+            const convertBtn = document.getElementById('convertBtn');
+            convertBtn.disabled = true;
+            
+            // Simular progresso
+            simulateProgress();
             
             try {
                 const response = await fetch('/convert', {
@@ -302,37 +342,95 @@ HTML_PAGE = '''
                     body: formData
                 });
                 
+                if (!response.ok) {
+                    throw new Error('HTTP error: ' + response.status);
+                }
+                
                 const result = await response.json();
                 
                 if (result.success) {
                     // Mostrar resultado
                     document.getElementById('videoId').textContent = result.video_id;
-                    document.getElementById('m3u8Link').value = window.location.origin + result.m3u8_url;
+                    
+                    // Construir URL completa
+                    const baseUrl = window.location.origin;
+                    const m3u8Url = result.m3u8_url || `/hls/${result.video_id}/master.m3u8`;
+                    const fullUrl = baseUrl + m3u8Url;
+                    
+                    document.getElementById('m3u8Link').value = fullUrl;
+                    document.getElementById('progressSection').style.display = 'none';
                     document.getElementById('resultSection').style.display = 'block';
                     document.getElementById('progressText').textContent = 'Concluído!';
                     document.getElementById('progressBar').style.width = '100%';
                 } else {
-                    alert('Erro: ' + (result.error || 'Conversão falhou'));
+                    alert('Erro na conversão: ' + (result.error || 'Erro desconhecido'));
+                    resetForm();
                 }
             } catch (error) {
+                console.error('Erro na conversão:', error);
                 alert('Erro de conexão: ' + error.message);
+                resetForm();
             } finally {
-                document.getElementById('convertBtn').disabled = false;
+                convertBtn.disabled = false;
             }
+        }
+        
+        // Simular progresso
+        function simulateProgress() {
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 2;
+                if (progress > 90) {
+                    clearInterval(interval);
+                    return;
+                }
+                updateProgress(progress, 'Convertendo...');
+            }, 200);
+        }
+        
+        function updateProgress(percent, text) {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            
+            if (progressBar) progressBar.style.width = percent + '%';
+            if (progressText) progressText.textContent = text + ' (' + Math.round(percent) + '%)';
         }
         
         // Copiar link
         function copyLink() {
             const linkInput = document.getElementById('m3u8Link');
             linkInput.select();
+            linkInput.setSelectionRange(0, 99999); // Para mobile
             document.execCommand('copy');
-            alert('Link copiado!');
+            alert('Link copiado para a área de transferência!');
         }
         
         // Testar player
         function testPlayer() {
             const videoId = document.getElementById('videoId').textContent;
-            window.open('/player/' + videoId, '_blank');
+            if (videoId) {
+                window.open('/player/' + videoId, '_blank');
+            }
+        }
+        
+        // Resetar formulário
+        function resetForm() {
+            selectedFile = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('fileInfo').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'none';
+            document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('convertBtn').disabled = false;
+            
+            // Resetar checkboxes
+            document.getElementById('q240').checked = true;
+            document.getElementById('q480').checked = true;
+            document.getElementById('q720').checked = true;
+            document.getElementById('q1080').checked = false;
+            
+            // Resetar progresso
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = 'Aguardando início...';
         }
         
         // Formatar bytes
@@ -350,24 +448,39 @@ HTML_PAGE = '''
             
             // Configurar arrastar e soltar
             const uploadArea = document.querySelector('.upload-area');
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.style.backgroundColor = '#f0f0ff';
-            });
-            
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.style.backgroundColor = 'white';
-            });
-            
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.style.backgroundColor = 'white';
+            if (uploadArea) {
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.backgroundColor = '#f0f0ff';
+                });
                 
-                if (e.dataTransfer.files.length > 0) {
-                    document.getElementById('fileInput').files = e.dataTransfer.files;
-                    handleFileSelect();
-                }
-            });
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.style.backgroundColor = 'white';
+                });
+                
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.backgroundColor = 'white';
+                    
+                    if (e.dataTransfer.files.length > 0) {
+                        const file = e.dataTransfer.files[0];
+                        // Verificar se é um arquivo de vídeo
+                        if (file.type.startsWith('video/') || 
+                            file.name.match(/\.(mp4|avi|mov|mkv|webm)$/i)) {
+                            document.getElementById('fileInput').files = e.dataTransfer.files;
+                            handleFileSelect();
+                        } else {
+                            alert('Por favor, selecione um arquivo de vídeo (MP4, AVI, MOV, MKV, WEBM)');
+                        }
+                    }
+                });
+            }
+            
+            // Adicionar listener para o botão de reset
+            const resetBtn = document.querySelector('button[onclick="resetForm()"]');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', resetForm);
+            }
         });
     </script>
 </body>
@@ -376,19 +489,29 @@ HTML_PAGE = '''
 
 @app.route('/')
 def index():
-    return HTML_PAGE
+    return render_template_string(HTML_PAGE)
 
 @app.route('/health')
 def health():
     """Health check"""
-    ffmpeg_available = subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0
-    
-    return jsonify({
-        "status": "online",
-        "service": "hls-converter",
-        "ffmpeg": ffmpeg_available,
-        "timestamp": datetime.now().isoformat()
-    })
+    try:
+        # Verificar ffmpeg
+        ffmpeg_result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
+        ffmpeg_available = ffmpeg_result.returncode == 0
+        
+        return jsonify({
+            "status": "online",
+            "service": "hls-converter",
+            "ffmpeg": ffmpeg_available,
+            "ffmpeg_path": ffmpeg_result.stdout.strip() if ffmpeg_available else None,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        })
 
 @app.route('/convert', methods=['POST'])
 def convert():
@@ -400,10 +523,19 @@ def convert():
         if file.filename == '':
             return jsonify({"success": False, "error": "Nenhum arquivo selecionado"})
         
+        # Verificar extensão do arquivo
+        allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.flv', '.wmv'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({"success": False, "error": f"Formato não suportado. Use: {', '.join(allowed_extensions)}"})
+        
         # Verificar ffmpeg
-        ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
-        if not ffmpeg_path:
-            return jsonify({"success": False, "error": "FFmpeg não está instalado"})
+        try:
+            ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
+            if not ffmpeg_path:
+                return jsonify({"success": False, "error": "FFmpeg não está instalado. Execute: sudo apt install ffmpeg"})
+        except:
+            return jsonify({"success": False, "error": "FFmpeg não está instalado. Execute: sudo apt install ffmpeg"})
         
         # Obter qualidades
         qualities_json = request.form.get('qualities', '["720p"]')
@@ -418,11 +550,12 @@ def convert():
         os.makedirs(output_dir, exist_ok=True)
         
         # Salvar arquivo original
-        filename = file.filename
+        filename = secure_filename(file.filename) if hasattr(file, 'filename') else f"video{file_ext}"
         original_path = os.path.join(UPLOAD_DIR, f"{video_id}_{filename}")
         file.save(original_path)
         
-        print(f"Convertendo: {filename} para {video_id}")
+        print(f"🔧 Convertendo: {filename} para {video_id}")
+        print(f"📊 Qualidades: {', '.join(qualities)}")
         
         # Converter para cada qualidade
         for quality in qualities:
@@ -431,76 +564,104 @@ def convert():
             
             m3u8_file = os.path.join(quality_dir, 'index.m3u8')
             
+            # Configurar parâmetros por qualidade
             if quality == '240p':
-                cmd = [
-                    ffmpeg_path, '-i', original_path,
-                    '-vf', 'scale=426:240',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'aac',
-                    '-hls_time', '4',
-                    '-hls_list_size', '0',
-                    '-f', 'hls', m3u8_file
-                ]
+                scale = "426:240"
+                bitrate = "400k"
+                bandwidth = "400000"
+                resolution = "426x240"
             elif quality == '480p':
-                cmd = [
-                    ffmpeg_path, '-i', original_path,
-                    '-vf', 'scale=854:480',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'aac',
-                    '-hls_time', '4',
-                    '-hls_list_size', '0',
-                    '-f', 'hls', m3u8_file
-                ]
+                scale = "854:480"
+                bitrate = "800k"
+                bandwidth = "800000"
+                resolution = "854x480"
             elif quality == '720p':
-                cmd = [
-                    ffmpeg_path, '-i', original_path,
-                    '-vf', 'scale=1280:720',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'aac',
-                    '-hls_time', '4',
-                    '-hls_list_size', '0',
-                    '-f', 'hls', m3u8_file
-                ]
+                scale = "1280:720"
+                bitrate = "1500k"
+                bandwidth = "1500000"
+                resolution = "1280x720"
             elif quality == '1080p':
-                cmd = [
-                    ffmpeg_path, '-i', original_path,
-                    '-vf', 'scale=1920:1080',
-                    '-c:v', 'libx264', '-preset', 'fast',
-                    '-c:a', 'aac',
-                    '-hls_time', '4',
-                    '-hls_list_size', '0',
-                    '-f', 'hls', m3u8_file
-                ]
+                scale = "1920:1080"
+                bitrate = "3000k"
+                bandwidth = "3000000"
+                resolution = "1920x1080"
             else:
-                continue
+                continue  # Pular qualidade desconhecida
             
-            # Executar conversão
+            print(f"  ⏳ Convertendo para {quality}...")
+            
+            # Comando ffmpeg otimizado
+            cmd = [
+                ffmpeg_path, '-i', original_path,
+                '-vf', f'scale={scale}',
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-b:v', bitrate,
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-hls_time', '6',
+                '-hls_list_size', '0',
+                '-hls_segment_filename', os.path.join(quality_dir, 'segment_%03d.ts'),
+                '-f', 'hls', m3u8_file
+            ]
+            
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                if result.returncode != 0:
-                    print(f"Erro na conversão {quality}: {result.stderr[:200]}")
+                if result.returncode == 0:
+                    print(f"  ✅ {quality} convertida com sucesso")
+                else:
+                    print(f"  ❌ Erro na conversão {quality}: {result.stderr[:200]}")
             except subprocess.TimeoutExpired:
-                print(f"Timeout na conversão {quality}")
+                print(f"  ⚠️  Timeout na conversão {quality}")
+            except Exception as e:
+                print(f"  ❌ Exceção na conversão {quality}: {str(e)}")
         
         # Criar master playlist
         master_file = os.path.join(output_dir, 'master.m3u8')
         with open(master_file, 'w') as f:
             f.write("#EXTM3U\n")
             f.write("#EXT-X-VERSION:3\n")
+            
             for quality in qualities:
-                f.write(f"#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\n")
+                if quality == '240p':
+                    bandwidth = "400000"
+                    resolution = "426x240"
+                elif quality == '480p':
+                    bandwidth = "800000"
+                    resolution = "854x480"
+                elif quality == '720p':
+                    bandwidth = "1500000"
+                    resolution = "1280x720"
+                elif quality == '1080p':
+                    bandwidth = "3000000"
+                    resolution = "1920x1080"
+                else:
+                    continue
+                
+                f.write(f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={resolution}\n")
                 f.write(f"{quality}/index.m3u8\n")
         
         # Atualizar banco de dados
         db = load_database()
-        db["conversions"].append({
+        conversion_data = {
             "video_id": video_id,
             "filename": filename,
+            "qualities": qualities,
             "timestamp": datetime.now().isoformat(),
-            "status": "success"
-        })
-        db["stats"]["total"] += 1
-        db["stats"]["success"] += 1
+            "status": "success",
+            "m3u8_url": f"/hls/{video_id}/master.m3u8"
+        }
+        
+        if "conversions" not in db:
+            db["conversions"] = []
+        db["conversions"].append(conversion_data)
+        
+        # Atualizar estatísticas
+        if "stats" not in db:
+            db["stats"] = {"total": 0, "success": 0, "failed": 0}
+        db["stats"]["total"] = db["stats"].get("total", 0) + 1
+        db["stats"]["success"] = db["stats"].get("success", 0) + 1
+        
         save_database(db)
         
         # Limpar arquivo original
@@ -509,19 +670,35 @@ def convert():
         except:
             pass
         
+        print(f"🎉 Conversão {video_id} concluída!")
+        
         return jsonify({
             "success": True,
             "video_id": video_id,
-            "m3u8_url": f"/hls/{video_id}/master.m3u8"
+            "qualities": qualities,
+            "m3u8_url": f"/hls/{video_id}/master.m3u8",
+            "player_url": f"/player/{video_id}"
         })
         
     except Exception as e:
-        print(f"Erro na conversão: {str(e)}")
+        print(f"❌ Erro na conversão: {str(e)}")
+        
+        # Atualizar estatísticas de erro no banco de dados
+        try:
+            db = load_database()
+            db["stats"]["total"] = db["stats"].get("total", 0) + 1
+            db["stats"]["failed"] = db["stats"].get("failed", 0) + 1
+            save_database(db)
+        except:
+            pass
+        
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/player/<video_id>')
 def player(video_id):
     """Página do player"""
+    m3u8_url = f"/hls/{video_id}/master.m3u8"
+    
     player_html = f'''
     <!DOCTYPE html>
     <html>
@@ -529,83 +706,220 @@ def player(video_id):
         <title>Player HLS - {video_id}</title>
         <link href="https://vjs.zencdn.net/7.20.3/video-js.css" rel="stylesheet">
         <style>
-            body {{ margin: 0; padding: 20px; background: #000; }}
-            .player-container {{ max-width: 1000px; margin: 0 auto; }}
+            body {{ 
+                margin: 0; 
+                padding: 20px; 
+                background: #1a1a1a;
+                color: white;
+                font-family: Arial, sans-serif;
+            }}
+            .player-container {{ 
+                max-width: 1200px; 
+                margin: 0 auto;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 20px;
+            }}
+            .back-btn {{
+                display: inline-block;
+                background: #667eea;
+                color: white;
+                padding: 10px 20px;
+                text-decoration: none;
+                border-radius: 5px;
+                margin-bottom: 20px;
+            }}
+            .back-btn:hover {{
+                background: #5a67d8;
+            }}
         </style>
     </head>
     <body>
         <div class="player-container">
-            <video id="hlsPlayer" class="video-js vjs-default-skin" controls preload="auto" width="100%" height="auto">
-                <source src="/hls/{video_id}/master.m3u8" type="application/x-mpegURL">
+            <div class="header">
+                <a href="/" class="back-btn">⬅️ Voltar</a>
+                <h2>🎬 Player HLS - {video_id}</h2>
+            </div>
+            
+            <video id="hlsPlayer" class="video-js vjs-default-skin vjs-big-play-centered" 
+                   controls preload="auto" width="100%" height="auto">
+                <source src="{m3u8_url}" type="application/x-mpegURL">
+                <p class="vjs-no-js">
+                    Seu navegador não suporta a reprodução de vídeo HLS.
+                    Por favor, use um navegador moderno como Chrome, Firefox ou Safari.
+                </p>
             </video>
+            
+            <div style="margin-top: 20px; text-align: center;">
+                <p><strong>URL do vídeo:</strong> {m3u8_url}</p>
+                <button onclick="copyPlayerUrl()" style="
+                    background: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    margin: 10px;
+                ">📋 Copiar URL</button>
+            </div>
         </div>
         
         <script src="https://vjs.zencdn.net/7.20.3/video.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/videojs-contrib-hls/5.15.0/videojs-contrib-hls.min.js"></script>
         <script>
-            var player = videojs('hlsPlayer');
-            player.play();
+            // Inicializar player
+            var player = videojs('hlsPlayer', {
+                controls: true,
+                autoplay: false,
+                preload: 'auto',
+                responsive: true,
+                fluid: true
+            });
+            
+            // Função para copiar URL
+            function copyPlayerUrl() {{
+                const url = "{m3u8_url}";
+                const fullUrl = window.location.origin + url;
+                
+                navigator.clipboard.writeText(fullUrl).then(function() {{
+                    alert('URL copiada para a área de transferência!');
+                }}, function(err) {{
+                    // Fallback para navegadores antigos
+                    const tempInput = document.createElement('input');
+                    tempInput.value = fullUrl;
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(tempInput);
+                    alert('URL copiada para a área de transferência!');
+                }});
+            }}
+            
+            // Adicionar tratamento de erro
+            player.on('error', function() {{
+                console.log('Erro no player:', player.error());
+                alert('Erro ao carregar o vídeo. Verifique se a conversão foi concluída.');
+            }});
         </script>
     </body>
     </html>
     '''
-    return player_html
+    return render_template_string(player_html)
 
 @app.route('/hls/<path:path>')
 def serve_hls(path):
     """Servir arquivos HLS"""
     file_path = os.path.join(HLS_DIR, path)
     if os.path.exists(file_path):
-        return send_file(file_path)
+        response = send_file(file_path)
+        # Adicionar headers CORS para permitir acesso do player
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+        return response
     return "Arquivo não encontrado", 404
 
+# Adicionar rota para servir arquivos estáticos
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Servir arquivos estáticos"""
+    static_dir = os.path.join(BASE_DIR, 'static')
+    return send_from_directory(static_dir, filename)
+
+# Adicionar helper para secure_filename se não existir
+try:
+    from werkzeug.utils import secure_filename
+except ImportError:
+    def secure_filename(filename):
+        """Versão simplificada de secure_filename"""
+        import re
+        filename = str(filename)
+        filename = re.sub(r'[^\w\s.-]', '', filename)
+        filename = re.sub(r'[-\s]+', '-', filename)
+        return filename.strip('.-')
+
 if __name__ == '__main__':
-    print("=" * 50)
+    print("=" * 60)
     print("🎬 HLS Converter - Servidor Iniciado")
-    print("=" * 50)
+    print("=" * 60)
     
     # Verificar ffmpeg
-    ffmpeg_path = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True).stdout.strip()
-    if ffmpeg_path:
-        print(f"✅ FFmpeg encontrado: {ffmpeg_path}")
-    else:
-        print("❌ FFmpeg NÃO encontrado!")
-        print("   Instale com: sudo apt-get install ffmpeg")
+    try:
+        ffmpeg_result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
+        if ffmpeg_result.returncode == 0:
+            ffmpeg_path = ffmpeg_result.stdout.strip()
+            print(f"✅ FFmpeg encontrado: {ffmpeg_path}")
+            
+            # Testar versão
+            version_result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+            if version_result.returncode == 0:
+                version_line = version_result.stdout.split('\n')[0]
+                print(f"📊 {version_line}")
+        else:
+            print("❌ FFmpeg NÃO encontrado!")
+            print("📋 Execute: sudo apt update && sudo apt install -y ffmpeg")
+    except Exception as e:
+        print(f"⚠️  Erro ao verificar ffmpeg: {e}")
     
     # Obter IP
+    ip = "localhost"
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
     except:
-        ip = "localhost"
+        pass
     
     print(f"🌐 Acesse em: http://{ip}:8080")
     print(f"🌐 Ou localmente: http://localhost:8080")
     print(f"🩺 Health check: http://{ip}:8080/health")
-    print("=" * 50)
+    print("=" * 60)
     
-    from waitress import serve
-    serve(app, host='0.0.0.0', port=8080)
+    # Iniciar servidor
+    try:
+        from waitress import serve
+        print("🚀 Iniciando servidor Waitress na porta 8080...")
+        serve(app, host='0.0.0.0', port=8080)
+    except ImportError:
+        print("⚠️  Waitress não encontrado, usando Flask dev server...")
+        print("📋 Instale: pip install waitress")
+        app.run(host='0.0.0.0', port=8080, debug=True)
 EOF
 
-# 8. CRIAR SERVIÇO SYSTEMD SIMPLES
+# 8. CRIAR SERVIÇO SYSTEMD MELHORADO
 echo "⚙️ Criando serviço systemd..."
 
 cat > hls-converter.service << EOF
 [Unit]
 Description=HLS Converter Service
 After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
 User=$USER
 WorkingDirectory=$HLS_HOME
-Environment="PATH=$HLS_HOME/venv/bin"
+Environment="PATH=$HLS_HOME/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Comando para iniciar
 ExecStart=$HLS_HOME/venv/bin/python $HLS_HOME/app.py
+
+# Reiniciar sempre
 Restart=always
 RestartSec=10
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hls-converter
+
+# Segurança
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Limites
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
@@ -621,62 +935,178 @@ sudo systemctl start hls-converter
 # 10. CONFIGURAR FIREWALL
 echo "🔥 Configurando firewall..."
 # Verificar e configurar firewall
-if command -v ufw &> /dev/null; then
+if command -v ufw &> /dev/null && sudo ufw status | grep -q "Status: active"; then
     sudo ufw allow 8080/tcp
     echo "✅ Porta 8080 aberta no UFW"
-elif command -v firewall-cmd &> /dev/null; then
+elif command -v firewall-cmd &> /dev/null && sudo systemctl is-active --quiet firewalld; then
     sudo firewall-cmd --permanent --add-port=8080/tcp
     sudo firewall-cmd --reload
     echo "✅ Porta 8080 aberta no firewalld"
 else
-    # Configurar iptables diretamente
+    # Tentar iptables
     sudo iptables -A INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || true
-    echo "✅ Porta 8080 aberta via iptables"
+    echo "✅ Porta 8080 configurada (firewall pode não estar ativo)"
 fi
 
 # 11. AGUARDAR INICIALIZAÇÃO
-echo "⏳ Aguardando inicialização (5 segundos)..."
-sleep 5
+echo "⏳ Aguardando inicialização (7 segundos)..."
+sleep 7
 
-# 12. VERIFICAÇÃO
+# 12. VERIFICAÇÃO COMPLETA
 echo "🔍 Verificando instalação..."
+echo ""
 
 # Verificar serviço
 if sudo systemctl is-active --quiet hls-converter; then
-    echo "✅ Serviço está ativo"
+    echo "✅ Serviço está ativo e rodando"
+    
+    # Verificar status do serviço
+    echo "📊 Status do serviço:"
+    sudo systemctl status hls-converter --no-pager | head -15
+    
+    # Aguardar mais um pouco para garantir que está pronto
+    sleep 3
 else
     echo "❌ Serviço não está ativo"
-    echo "📋 Logs:"
-    sudo journalctl -u hls-converter -n 10 --no-pager
+    echo "📋 Últimos logs:"
+    sudo journalctl -u hls-converter -n 15 --no-pager
+    
+    echo ""
     echo "🔧 Tentando iniciar manualmente..."
-    cd "$HLS_HOME" && $HLS_HOME/venv/bin/python app.py &
-    sleep 3
+    cd "$HLS_HOME" 
+    source venv/bin/activate
+    nohup python app.py > app.log 2>&1 &
+    echo $! > app.pid
+    sleep 5
 fi
 
 # Testar acesso
-echo "🌐 Testando acesso..."
+echo ""
+echo "🌐 Testando acesso ao servidor..."
 IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "localhost")
 
-if curl -s http://localhost:8080/health > /dev/null; then
-    echo "✅ Aplicação respondendo"
-    echo ""
-    echo "🎉 INSTALAÇÃO COMPLETA!"
-    echo "======================="
-    echo ""
-    echo "🌐 ACESSE A INTERFACE EM:"
-    echo "   http://$IP:8080"
-    echo "   ou"
-    echo "   http://localhost:8080"
-    echo ""
-    echo "⚙️  COMANDOS ÚTEIS:"
-    echo "   sudo systemctl status hls-converter"
-    echo "   sudo journalctl -u hls-converter -f"
-    echo "   sudo systemctl restart hls-converter"
-    echo ""
-    echo "📁 Diretório: $HLS_HOME"
+# Testar health endpoint
+echo "  1. Testando health endpoint..."
+if timeout 10 curl -s http://localhost:8080/health > /dev/null; then
+    HEALTH_RESPONSE=$(timeout 5 curl -s http://localhost:8080/health)
+    if echo "$HEALTH_RESPONSE" | grep -q '"status"'; then
+        echo "     ✅ Health check OK"
+        # Extrair informações do health
+        FFMPEG_STATUS=$(echo "$HEALTH_RESPONSE" | grep -o '"ffmpeg":\s*\(true\|false\)' | grep -o 'true\|false')
+        if [ "$FFMPEG_STATUS" = "true" ]; then
+            echo "     ✅ FFmpeg disponível"
+        else
+            echo "     ⚠️  FFmpeg não encontrado"
+            echo "     📋 Execute: sudo apt install ffmpeg"
+        fi
+    else
+        echo "     ⚠️  Health check retornou resposta inválida"
+    fi
 else
-    echo "⚠️  Aplicação não está respondendo"
-    echo "🔧 Iniciando manualmente..."
-    cd "$HLS_HOME"
-    $HLS_HOME/venv/bin/python app.py
+    echo "     ❌ Health check falhou"
 fi
+
+# Testar página principal
+echo "  2. Testando página principal..."
+if timeout 10 curl -s -I http://localhost:8080/ 2>/dev/null | head -1 | grep -q "200"; then
+    echo "     ✅ Página principal carregando"
+else
+    echo "     ❌ Página principal não carregando"
+    
+    # Tentar verificar se o processo está rodando
+    if pgrep -f "python.*app.py" > /dev/null; then
+        echo "     ⚠️  Processo está rodando mas não respondendo"
+        echo "     📋 Verificando porta..."
+        netstat -tlnp 2>/dev/null | grep ":8080" || echo "     Porta 8080 não está em uso"
+    fi
+fi
+
+# Mostrar URLs de acesso
+echo ""
+echo "🎉 INSTALAÇÃO COMPLETA!"
+echo "======================="
+echo ""
+echo "🌐 URLs DE ACESSO:"
+echo "   • Interface Principal: http://$IP:8080"
+echo "   • Health Check: http://$IP:8080/health"
+echo "   • Player (após conversão): http://$IP:8080/player/[video_id]"
+echo ""
+echo "⚙️  COMANDOS DE GERENCIAMENTO:"
+echo "   sudo systemctl status hls-converter    # Ver status"
+echo "   sudo systemctl restart hls-converter   # Reiniciar"
+echo "   sudo journalctl -u hls-converter -f    # Ver logs em tempo real"
+echo ""
+echo "🔧 SOLUÇÃO DE PROBLEMAS:"
+echo "   • Se não acessar: sudo ufw allow 8080/tcp"
+echo "   • Se FFmpeg faltar: sudo apt install ffmpeg"
+echo "   • Para reiniciar manualmente:"
+echo "     cd $HLS_HOME && source venv/bin/activate && python app.py"
+echo ""
+echo "📁 Diretório da aplicação: $HLS_HOME"
+echo "📋 Logs da aplicação: $HLS_HOME/app.log"
+echo "💾 Banco de dados: $HLS_HOME/db/conversions.json"
+
+# Criar script de gerenciamento simples
+echo ""
+echo "📝 Criando script de gerenciamento 'hlsctl'..."
+cat > "$HOME/hlsctl" << 'HLSCTL_EOF'
+#!/bin/bash
+# Script de gerenciamento do HLS Converter
+
+HLS_HOME="$HOME/hls-converter"
+
+case "$1" in
+    start)
+        sudo systemctl start hls-converter
+        echo "✅ Serviço iniciado"
+        ;;
+    stop)
+        sudo systemctl stop hls-converter
+        echo "✅ Serviço parado"
+        ;;
+    restart)
+        sudo systemctl restart hls-converter
+        echo "✅ Serviço reiniciado"
+        ;;
+    status)
+        sudo systemctl status hls-converter --no-pager
+        ;;
+    logs)
+        if [ "$2" = "-f" ]; then
+            sudo journalctl -u hls-converter -f
+        else
+            sudo journalctl -u hls-converter -n 30 --no-pager
+        fi
+        ;;
+    test)
+        echo "🧪 Testando sistema..."
+        curl -s http://localhost:8080/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8080/health
+        ;;
+    direct)
+        echo "🚀 Iniciando diretamente..."
+        cd "$HLS_HOME"
+        source venv/bin/activate
+        python app.py
+        ;;
+    *)
+        echo "Uso: hlsctl [comando]"
+        echo ""
+        echo "Comandos:"
+        echo "  start     - Iniciar serviço"
+        echo "  stop      - Parar serviço"
+        echo "  restart   - Reiniciar serviço"
+        echo "  status    - Status do serviço"
+        echo "  logs [-f] - Ver logs (use -f para seguir)"
+        echo "  test      - Testar sistema"
+        echo "  direct    - Iniciar diretamente (sem systemd)"
+        ;;
+esac
+HLSCTL_EOF
+
+chmod +x "$HOME/hlsctl"
+
+echo ""
+echo "✅ Script 'hlsctl' criado em $HOME/hlsctl"
+echo "   Use: hlsctl status  # Para verificar status"
+echo ""
+echo "🚀 Sistema pronto para uso!"
